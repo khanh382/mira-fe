@@ -16,6 +16,11 @@ body {
   font-size: 18px;
 }
 
+body.theme-dark {
+  background: #09090b;
+  color: #e4e4e7;
+}
+
 button:not(:disabled) {
   cursor: pointer;
 }
@@ -42,4 +47,186 @@ button:focus-visible {
 .text-xs {
   font-size: 0.85rem;
   line-height: 1.3rem;
+}
+
+/* ============================================================
+ * Global dark theme override for utility-heavy pages.
+ * Palette:
+ *   - Canvas:      #09090b (zinc-950-ish)
+ *   - Surface 1:   #111113 (main panels)
+ *   - Surface 2:   #17171a (cards inside panels)
+ *   - Surface 3:   #1f1f23 (inputs, nested rows)
+ *   - Border:      #27272a / #2f2f33
+ *   - Text:        #e4e4e7
+ *   - Muted text:  #a1a1aa
+ * ============================================================ */
+
+body.theme-dark {
+  color-scheme: dark;
+}
+
+/* ----------------------------------------------------------
+ * Helper mixin: match Tailwind class exactly (either alone, with
+ * a following space, or with a trailing `/` for opacity variants).
+ * This avoids substring collisions like `bg-red-50` matching `bg-red-500`.
+ * ---------------------------------------------------------- */
+
+/* Base surfaces */
+body.theme-dark .bg-white,
+body.theme-dark [class*="bg-white "],
+body.theme-dark [class*="bg-white/"],
+body.theme-dark [class$="bg-white"] {
+  background-color: #111113 !important;
+}
+
+body.theme-dark .bg-slate-50,  body.theme-dark [class*="bg-slate-50 "],  body.theme-dark [class*="bg-slate-50/"],  body.theme-dark [class$="bg-slate-50"],
+body.theme-dark .bg-slate-100, body.theme-dark [class*="bg-slate-100 "], body.theme-dark [class*="bg-slate-100/"], body.theme-dark [class$="bg-slate-100"],
+body.theme-dark .bg-zinc-50,   body.theme-dark [class*="bg-zinc-50 "],   body.theme-dark [class*="bg-zinc-50/"],   body.theme-dark [class$="bg-zinc-50"],
+body.theme-dark .bg-zinc-100,  body.theme-dark [class*="bg-zinc-100 "],  body.theme-dark [class*="bg-zinc-100/"],  body.theme-dark [class$="bg-zinc-100"],
+body.theme-dark .bg-gray-50,   body.theme-dark [class*="bg-gray-50 "],   body.theme-dark [class*="bg-gray-50/"],   body.theme-dark [class$="bg-gray-50"],
+body.theme-dark .bg-gray-100,  body.theme-dark [class*="bg-gray-100 "],  body.theme-dark [class*="bg-gray-100/"],  body.theme-dark [class$="bg-gray-100"],
+body.theme-dark .bg-neutral-50,  body.theme-dark [class*="bg-neutral-50 "],  body.theme-dark [class*="bg-neutral-50/"],  body.theme-dark [class$="bg-neutral-50"],
+body.theme-dark .bg-neutral-100, body.theme-dark [class*="bg-neutral-100 "], body.theme-dark [class*="bg-neutral-100/"], body.theme-dark [class$="bg-neutral-100"] {
+  background-color: #17171a !important;
+}
+
+body.theme-dark .bg-zinc-200,  body.theme-dark [class*="bg-zinc-200 "],  body.theme-dark [class*="bg-zinc-200/"],  body.theme-dark [class$="bg-zinc-200"],
+body.theme-dark .bg-slate-200, body.theme-dark [class*="bg-slate-200 "], body.theme-dark [class*="bg-slate-200/"], body.theme-dark [class$="bg-slate-200"],
+body.theme-dark .bg-gray-200,  body.theme-dark [class*="bg-gray-200 "],  body.theme-dark [class*="bg-gray-200/"],  body.theme-dark [class$="bg-gray-200"] {
+  background-color: #1f1f23 !important;
+}
+
+/* Red tints kept as subtle red wash instead of gray */
+body.theme-dark .bg-red-50,  body.theme-dark [class*="bg-red-50 "],  body.theme-dark [class*="bg-red-50/"],  body.theme-dark [class$="bg-red-50"],
+body.theme-dark .bg-red-100, body.theme-dark [class*="bg-red-100 "], body.theme-dark [class*="bg-red-100/"], body.theme-dark [class$="bg-red-100"] {
+  background-color: rgba(173, 8, 8, 0.12) !important;
+}
+
+/* Text colors */
+body.theme-dark .text-zinc-900,
+body.theme-dark .text-zinc-800,
+body.theme-dark .text-zinc-700,
+body.theme-dark .text-slate-900,
+body.theme-dark .text-slate-800,
+body.theme-dark .text-slate-700,
+body.theme-dark .text-gray-900,
+body.theme-dark .text-gray-800,
+body.theme-dark .text-gray-700 {
+  color: #e4e4e7 !important;
+}
+
+body.theme-dark .text-zinc-600,
+body.theme-dark .text-zinc-500,
+body.theme-dark .text-slate-600,
+body.theme-dark .text-slate-500,
+body.theme-dark .text-gray-600,
+body.theme-dark .text-gray-500 {
+  color: #a1a1aa !important;
+}
+
+body.theme-dark .text-zinc-400,
+body.theme-dark .text-zinc-300,
+body.theme-dark .text-slate-400,
+body.theme-dark .text-slate-300,
+body.theme-dark .text-gray-400,
+body.theme-dark .text-gray-300 {
+  color: #71717a !important;
+}
+
+body.theme-dark .text-red-700,
+body.theme-dark .text-red-800,
+body.theme-dark .text-red-900 {
+  color: #fca5a5 !important;
+}
+
+body.theme-dark .text-red-600 {
+  color: #f87171 !important;
+}
+
+/* Borders */
+body.theme-dark .border-zinc-100,  body.theme-dark [class*="border-zinc-100 "],  body.theme-dark [class*="border-zinc-100/"],  body.theme-dark [class$="border-zinc-100"],
+body.theme-dark .border-zinc-200,  body.theme-dark [class*="border-zinc-200 "],  body.theme-dark [class*="border-zinc-200/"],  body.theme-dark [class$="border-zinc-200"],
+body.theme-dark .border-zinc-300,  body.theme-dark [class*="border-zinc-300 "],  body.theme-dark [class*="border-zinc-300/"],  body.theme-dark [class$="border-zinc-300"],
+body.theme-dark .border-slate-100, body.theme-dark [class*="border-slate-100 "], body.theme-dark [class*="border-slate-100/"], body.theme-dark [class$="border-slate-100"],
+body.theme-dark .border-slate-200, body.theme-dark [class*="border-slate-200 "], body.theme-dark [class*="border-slate-200/"], body.theme-dark [class$="border-slate-200"],
+body.theme-dark .border-slate-300, body.theme-dark [class*="border-slate-300 "], body.theme-dark [class*="border-slate-300/"], body.theme-dark [class$="border-slate-300"],
+body.theme-dark .border-gray-100,  body.theme-dark [class*="border-gray-100 "],  body.theme-dark [class*="border-gray-100/"],  body.theme-dark [class$="border-gray-100"],
+body.theme-dark .border-gray-200,  body.theme-dark [class*="border-gray-200 "],  body.theme-dark [class*="border-gray-200/"],  body.theme-dark [class$="border-gray-200"],
+body.theme-dark .border-gray-300,  body.theme-dark [class*="border-gray-300 "],  body.theme-dark [class*="border-gray-300/"],  body.theme-dark [class$="border-gray-300"] {
+  border-color: #27272a !important;
+}
+
+body.theme-dark .border-red-100, body.theme-dark [class*="border-red-100 "], body.theme-dark [class*="border-red-100/"], body.theme-dark [class$="border-red-100"],
+body.theme-dark .border-red-200, body.theme-dark [class*="border-red-200 "], body.theme-dark [class*="border-red-200/"], body.theme-dark [class$="border-red-200"],
+body.theme-dark .border-red-300, body.theme-dark [class*="border-red-300 "], body.theme-dark [class*="border-red-300/"], body.theme-dark [class$="border-red-300"] {
+  border-color: rgba(173, 8, 8, 0.35) !important;
+}
+
+/* Ring utilities (Tailwind ring is box-shadow based – use CSS var when possible) */
+body.theme-dark .ring-zinc-200,
+body.theme-dark .ring-zinc-100,
+body.theme-dark .ring-slate-200,
+body.theme-dark .ring-slate-100,
+body.theme-dark .ring-gray-200,
+body.theme-dark .ring-gray-100 {
+  --tw-ring-color: #27272a !important;
+}
+
+/* Shadows become flatter on dark surfaces */
+body.theme-dark .shadow-sm,
+body.theme-dark .shadow,
+body.theme-dark .shadow-md,
+body.theme-dark .shadow-lg,
+body.theme-dark .shadow-xl,
+body.theme-dark .shadow-2xl {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Form controls */
+body.theme-dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+body.theme-dark select,
+body.theme-dark textarea {
+  background-color: #1f1f23 !important;
+  color: #e4e4e7 !important;
+  border-color: #2f2f33 !important;
+}
+
+body.theme-dark input::placeholder,
+body.theme-dark textarea::placeholder {
+  color: #71717a !important;
+}
+
+/* Disabled controls stay visibly muted */
+body.theme-dark input:disabled,
+body.theme-dark select:disabled,
+body.theme-dark textarea:disabled,
+body.theme-dark button:disabled {
+  background-color: #17171a !important;
+  color: #71717a !important;
+}
+
+/* Tables */
+body.theme-dark table thead tr,
+body.theme-dark [class*="bg-zinc-50"] thead tr {
+  background-color: #17171a !important;
+}
+
+body.theme-dark table tbody tr:hover {
+  background-color: #1f1f23 !important;
+}
+
+/* Dividers */
+body.theme-dark [class*="divide-zinc-"] > * + *,
+body.theme-dark [class*="divide-slate-"] > * + *,
+body.theme-dark [class*="divide-gray-"] > * + * {
+  border-color: #27272a !important;
+}
+
+/* Scrollbars (webkit) */
+body.theme-dark ::-webkit-scrollbar-thumb {
+  background-color: #2f2f33 !important;
+}
+
+body.theme-dark ::-webkit-scrollbar-track {
+  background-color: transparent !important;
 }

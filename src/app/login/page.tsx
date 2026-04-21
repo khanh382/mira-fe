@@ -1,6 +1,6 @@
 "use client";
 
-import React, { FormEvent, useMemo, useState } from "react";
+import React, { FormEvent, useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { requestLoginCode, verifyLoginCode } from "@/services/AuthService";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,6 +31,22 @@ export default function LoginPage() {
   const canSubmitStep2 = useMemo(() => {
     return code.trim().length > 0;
   }, [code]);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (step === 2) {
+      timer = setInterval(() => {
+        setRetryAfterSec((prev) => {
+          if (prev === null || prev <= 0) {
+            clearInterval(timer);
+            return prev === null ? null : 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [step]);
 
   const onRequestCode = async (e: FormEvent) => {
     e.preventDefault();
@@ -87,69 +103,89 @@ export default function LoginPage() {
   };
 
   return (
-    <section className="min-h-screen bg-gradient-to-br from-red-300 via-red-200 to-zinc-100 text-white">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-4 py-10">
-        <div className="grid w-full overflow-hidden rounded-2xl border border-red-400/80 bg-red-50/85 shadow-2xl backdrop-blur md:grid-cols-2">
-          <div className="hidden flex-col justify-between border-r border-red-200/80 bg-red-100/70 p-10 md:flex">
-            <div>
-              <div className="mb-4 flex items-center justify-end">
-                <label className="mr-2 text-xs font-medium text-red-700">{t("common.language")}:</label>
-                <select
-                  value={lang}
-                  onChange={(e) => setLang(e.target.value as "en" | "vi")}
-                  className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs text-red-700 outline-none ring-red-400 focus:ring-2"
-                >
-                  <option value="en">{t("common.english")}</option>
-                  <option value="vi">{t("common.vietnamese")}</option>
-                </select>
+    <section className="group relative flex min-h-screen items-center justify-center overflow-hidden bg-white text-zinc-900 selection:bg-red-200 selection:text-red-900">
+      {/* Dynamic Background Elements */}
+      <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 contrast-150 mix-blend-overlay"></div>
+      <div className="absolute -left-40 top-0 h-96 w-96 animate-pulse rounded-full bg-red-100 opacity-60 mix-blend-multiply blur-3xl filter transition-opacity duration-1000"></div>
+      <div className="absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-red-50 opacity-60 mix-blend-multiply blur-3xl filter"></div>
+      
+      <div className="relative z-10 w-full max-w-5xl p-4 sm:p-6 lg:p-8">
+        <div className="flex w-full flex-col overflow-hidden rounded-[2rem] border border-white/60 bg-white/70 shadow-[0_8px_30px_rgb(0,0,0,0.04)] backdrop-blur-2xl ring-1 ring-zinc-200/50 md:flex-row">
+          
+          {/* Left Side: Branding / Messaging */}
+          <div className="relative hidden w-full flex-col justify-between bg-zinc-50/50 p-10 md:flex md:w-5/12 lg:w-1/2">
+            <div className="relative z-10">
+              <div className="mb-6 flex items-center justify-start">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[rgb(173,8,8)] to-red-600 font-bold text-white shadow-lg shadow-red-500/30">
+                  M
+                </div>
               </div>
-              <p className="mb-3 inline-flex rounded-full border border-red-300 bg-red-200/80 px-3 py-1 text-xs uppercase tracking-[0.2em] text-red-700">
-                Mira Admin
-              </p>
-              <h1 className="text-4xl font-semibold leading-tight text-[rgb(173,8,8)]">
+              <h1 className="mt-8 bg-gradient-to-br from-zinc-900 to-zinc-600 bg-clip-text text-4xl font-extrabold leading-tight tracking-tight text-transparent lg:text-5xl">
                 {t("login.leftTitleLine1")}
               </h1>
-              <p className="mt-4 max-w-sm text-sm text-red-700/90">
+              <p className="mt-6 max-w-sm text-base leading-relaxed text-zinc-500">
                 {t("login.leftDescription")}
               </p>
             </div>
+            
+            <div className="relative z-10 mt-12 flex items-center justify-between">
+               <p className="inline-flex items-center rounded-full border border-red-200/50 bg-red-50 px-3 py-1.5 text-xs font-semibold tracking-widest text-[rgb(173,8,8)]">
+                  MIRA ADMIN
+               </p>
+               <select
+                  value={lang}
+                  onChange={(e) => setLang(e.target.value as "en" | "vi")}
+                  className="cursor-pointer appearance-none rounded-lg border border-zinc-200/60 bg-white/80 px-3 py-1.5 text-xs font-medium text-zinc-600 outline-none backdrop-blur-sm transition-all hover:bg-white focus:border-red-300 focus:ring-4 focus:ring-red-500/10"
+               >
+                  <option value="en">🇺🇸 EN</option>
+                  <option value="vi">🇻🇳 VI</option>
+               </select>
+            </div>
           </div>
 
-          <div className="p-6 sm:p-10">
-            <div className="mb-4 flex items-center justify-end md:hidden">
-              <label className="mr-2 text-xs font-medium text-red-700">{t("common.language")}:</label>
-              <select
-                value={lang}
-                onChange={(e) => setLang(e.target.value as "en" | "vi")}
-                className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs text-red-700 outline-none ring-red-400 focus:ring-2"
-              >
-                <option value="en">{t("common.english")}</option>
-                <option value="vi">{t("common.vietnamese")}</option>
-              </select>
+          {/* Right Side: Form */}
+          <div className="w-full bg-white p-8 sm:p-12 md:w-7/12 lg:w-1/2">
+            <div className="mb-8 flex flex-col md:hidden">
+              <div className="flex items-center justify-between">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[rgb(173,8,8)] to-red-600 font-bold text-white shadow-md shadow-red-500/20">
+                  M
+                </div>
+                <select
+                  value={lang}
+                  onChange={(e) => setLang(e.target.value as "en" | "vi")}
+                  className="cursor-pointer appearance-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-600 outline-none transition focus:border-red-300 focus:ring-4 focus:ring-red-500/10"
+                >
+                  <option value="en">🇺🇸 EN</option>
+                  <option value="vi">🇻🇳 VI</option>
+                </select>
+              </div>
             </div>
-            <h2 className="text-2xl font-semibold text-[rgb(173,8,8)]">{t("login.title")}</h2>
-            <p className="mt-2 text-sm text-zinc-600">
-              {t("login.subtitle", { step })}
-            </p>
+
+            <div className="mb-10 text-center md:text-left">
+              <h2 className="text-3xl font-bold tracking-tight text-zinc-900">{t("login.title")}</h2>
+              <p className="mt-2 text-sm text-zinc-500">
+                {t("login.subtitle", { step })}
+              </p>
+            </div>
 
             {message && (
-              <p className="mt-4 rounded-lg border border-emerald-700/40 bg-white px-3 py-2 text-sm text-emerald-700">
+              <div className="mb-6 animate-in slide-in-from-top-2 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4 shadow-sm text-sm text-emerald-800">
                 {message}
-              </p>
+              </div>
             )}
 
             {errorMessage && (
-              <p className="mt-4 rounded-lg border border-red-700/50 bg-white px-3 py-2 text-sm text-red-700">
+              <div className="mb-6 animate-in slide-in-from-top-2 rounded-xl border border-red-100 bg-red-50/50 p-4 shadow-sm text-sm text-red-800">
                 {errorMessage}
-              </p>
+              </div>
             )}
 
             {step === 1 ? (
-              <form className="mt-6 space-y-4" onSubmit={onRequestCode}>
+              <form className="space-y-5" onSubmit={onRequestCode}>
                 <div>
-                  <label className="mb-1 block text-sm text-zinc-700">{t("login.credentialType")}</label>
+                  <label className="mb-2 block text-sm font-medium text-zinc-700">{t("login.credentialType")}</label>
                   <select
-                    className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none ring-red-400 transition focus:ring-2"
+                    className="w-full appearance-none rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-3.5 text-sm text-zinc-800 outline-none transition-all focus:border-[rgb(173,8,8)] focus:bg-white focus:ring-4 focus:ring-red-500/10"
                     value={credentialType}
                     onChange={(e) => setCredentialType(e.target.value as LoginCredentialKey)}
                   >
@@ -160,59 +196,73 @@ export default function LoginPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm text-zinc-700">{t("login.credential")}</label>
+                  <label className="mb-2 block text-sm font-medium text-zinc-700">{t("login.credential")}</label>
                   <input
                     value={credentialValue}
                     onChange={(e) => setCredentialValue(e.target.value)}
-                    className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none ring-red-400 placeholder:text-zinc-500 transition focus:ring-2"
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-3.5 text-sm text-zinc-800 outline-none transition-all placeholder:text-zinc-400 focus:border-[rgb(173,8,8)] focus:bg-white focus:ring-4 focus:ring-red-500/10"
                     placeholder={t("login.enterCredential", { credentialType })}
                     autoComplete="username"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm text-zinc-700">{t("login.password")}</label>
+                  <label className="mb-2 block text-sm font-medium text-zinc-700">{t("login.password")}</label>
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none ring-red-400 placeholder:text-zinc-500 transition focus:ring-2"
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-3.5 text-sm text-zinc-800 outline-none transition-all placeholder:text-zinc-400 focus:border-[rgb(173,8,8)] focus:bg-white focus:ring-4 focus:ring-red-500/10"
                     placeholder={t("login.enterPassword")}
                     autoComplete="current-password"
                   />
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={!canSubmitStep1 || submitting}
-                  className="w-full rounded-lg border-0 bg-[rgb(173,8,8)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[rgb(150,7,7)] disabled:cursor-not-allowed disabled:bg-red-900"
-                >
-                  {submitting ? t("login.sendingCode") : t("login.sendCode")}
-                </button>
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={!canSubmitStep1 || submitting}
+                    className="group relative flex w-full items-center justify-center overflow-hidden rounded-xl bg-zinc-900 px-4 py-4 text-sm font-semibold text-white transition-all hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
+                  >
+                    <span className="relative z-10 flex items-center gap-2">
+                      {submitting ? t("login.sendingCode") : t("login.sendCode")}
+                      {!submitting && (
+                        <svg className="h-4 w-4 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                        </svg>
+                      )}
+                    </span>
+                    {!submitting && (
+                      <div className="absolute inset-0 z-0 bg-gradient-to-r from-[rgb(173,8,8)] to-red-600 opacity-0 transition-opacity duration-300 group-hover:opacity-100"></div>
+                    )}
+                  </button>
+                </div>
               </form>
             ) : (
-              <form className="mt-6 space-y-4" onSubmit={onVerifyCode}>
-                <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-                  <p>
-                    {t("login.loginFor")}: <span className="font-medium">{credentialValue}</span>
+              <form className="space-y-6 animate-in slide-in-from-right-4" onSubmit={onVerifyCode}>
+                <div className="rounded-xl border border-[rgb(173,8,8)]/20 bg-red-50/50 p-4 text-sm text-[rgb(173,8,8)]">
+                  <p className="font-medium">
+                    {t("login.loginFor")}: <span className="font-bold">{credentialValue}</span>
                   </p>
-                  {retryAfterSec !== null && (
-                    <p className="mt-1 text-zinc-600">{t("login.retryAfter", { seconds: retryAfterSec })}</p>
+                  {retryAfterSec !== null && retryAfterSec > 0 && (
+                    <p className="mt-1.5 text-red-600/80">{t("login.retryAfter", { seconds: retryAfterSec })}</p>
                   )}
-                  {expiresAt && <p className="mt-1 text-zinc-600">{t("login.expiresAt", { expiresAt })}</p>}
+                  {expiresAt && <p className="mt-1.5 text-red-600/80">{t("login.expiresAt", { expiresAt })}</p>}
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm text-zinc-700">{t("login.verificationCode")}</label>
+                  <label className="mb-2 block text-sm font-medium text-zinc-700">{t("login.verificationCode")}</label>
                   <input
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
-                    className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none ring-red-400 placeholder:text-zinc-500 transition focus:ring-2"
-                    placeholder={t("login.enterCode")}
+                    className="w-full bg-zinc-50/50 rounded-xl border border-zinc-200 px-4 py-3.5 text-lg font-mono tracking-widest text-center text-zinc-800 outline-none transition-all placeholder:text-zinc-300 focus:border-[rgb(173,8,8)] focus:bg-white focus:ring-4 focus:ring-red-500/10"
+                    placeholder="••••••"
+                    maxLength={6}
+                    autoFocus
                   />
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex gap-4 pt-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -221,14 +271,14 @@ export default function LoginPage() {
                       setErrorMessage("");
                       setMessage("");
                     }}
-                    className="w-1/2 rounded-lg border-0 bg-red-100 px-4 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-200"
+                    className="flex w-[40%] items-center justify-center rounded-xl bg-white px-4 py-4 text-sm font-semibold text-zinc-600 border border-zinc-200 shadow-sm transition-all hover:bg-zinc-50 hover:text-zinc-900"
                   >
                     {t("login.back")}
                   </button>
                   <button
                     type="submit"
                     disabled={!canSubmitStep2 || submitting}
-                    className="w-1/2 rounded-lg border-0 bg-[rgb(173,8,8)] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[rgb(150,7,7)] disabled:cursor-not-allowed disabled:bg-red-900"
+                    className="group relative flex flex-1 items-center justify-center overflow-hidden rounded-xl bg-[rgb(173,8,8)] px-4 py-4 text-sm font-semibold text-white shadow-lg shadow-red-500/30 transition-all hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400 disabled:shadow-none"
                   >
                     {submitting ? t("login.verifying") : t("login.verifyLogin")}
                   </button>

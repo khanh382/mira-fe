@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { io, Socket } from "socket.io-client";
 import { useLang } from "@/lang";
 import {
   createWorkflow as createWorkflowApi,
+  deleteWorkflow as deleteWorkflowApi,
   deleteNodeRuns,
   deleteWorkflowRuns,
   getWorkflowGraph,
@@ -55,6 +57,7 @@ type WorkflowModel = {
   status: WorkflowStatus;
   entryNodeId: string | null;
   version: number;
+  inputPayload: Record<string, unknown> | null;
   nodes: NodeModel[];
   edges: EdgeModel[];
 };
@@ -186,6 +189,11 @@ const MOCK_WORKFLOWS: WorkflowModel[] = [
     status: "draft",
     entryNodeId: "n_fetch",
     version: 1,
+    inputPayload: {
+      newsUrl: "https://example.com/news",
+      title: "Daily update",
+      websiteApiUrl: "https://api.example.com/posts",
+    },
     nodes: [
       {
         id: "n_fetch",
@@ -301,6 +309,45 @@ function hasCycle(nodes: NodeModel[], edges: EdgeModel[]) {
   return false;
 }
 
+const getSmartEdgePoints = (
+  from: { x: number; y: number; w: number; h: number },
+  to: { x: number; y: number; w: number; h: number }
+) => {
+  const cx1 = from.x + from.w / 2;
+  const cy1 = from.y + from.h / 2;
+  const cx2 = to.x + to.w / 2;
+  const cy2 = to.y + to.h / 2;
+  const dx = cx2 - cx1;
+  const dy = cy2 - cy1;
+  let x1, y1, c1x, c1y, x2, y2, c2x, c2y;
+  if (Math.abs(dx) > Math.abs(dy) * 1.2) {
+    if (dx > 0) {
+      x1 = from.x + from.w; y1 = cy1;
+      x2 = to.x; y2 = cy2;
+    } else {
+      x1 = from.x; y1 = cy1;
+      x2 = to.x + to.w; y2 = cy2;
+    }
+    c1x = x1 + (dx > 0 ? 1 : -1) * Math.max(60, Math.abs(dx) / 2);
+    c1y = y1;
+    c2x = x2 + (dx > 0 ? -1 : 1) * Math.max(60, Math.abs(dx) / 2);
+    c2y = y2;
+  } else {
+    if (dy > 0) {
+      x1 = cx1; y1 = from.y + from.h;
+      x2 = cx2; y2 = to.y;
+    } else {
+      x1 = cx1; y1 = from.y;
+      x2 = cx2; y2 = to.y + to.h;
+    }
+    c1x = x1;
+    c1y = y1 + (dy > 0 ? 1 : -1) * Math.max(60, Math.abs(dy) / 2);
+    c2x = x2;
+    c2y = y2 + (dy > 0 ? -1 : 1) * Math.max(60, Math.abs(dy) / 2);
+  }
+  return { x1, y1, c1x, c1y, x2, y2, c2x, c2y };
+};
+
 export default function WorkflowsPage() {
   const { t } = useLang();
   const tr = (key: string, fallback: string) => {
@@ -318,6 +365,13 @@ export default function WorkflowsPage() {
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [mouseCanvasPos, setMouseCanvasPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState<number>(1);
+  const [originalPinchDist, setOriginalPinchDist] = useState<number>(0);
+  const [originalPinchZoom, setOriginalPinchZoom] = useState<number>(1);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStartUserPos, setPanStartUserPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [panStartOffset, setPanStartOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [pendingConnect, setPendingConnect] = useState<PendingConnect | null>(null);
   const [dirty, setDirty] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
@@ -325,17 +379,23 @@ export default function WorkflowsPage() {
   const [versionConflict, setVersionConflict] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
+  const [deletingWorkflow, setDeletingWorkflow] = useState(false);
+  const [canvasFullscreen, setCanvasFullscreen] = useState(false);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toolOptions, setToolOptions] = useState<ToolOption[]>([]);
   const [runningWorkflow, setRunningWorkflow] = useState(false);
   const [runningNode, setRunningNode] = useState(false);
-  const [inputJson, setInputJson] = useState(
-    "{\n  \"newsUrl\": \"https://example.com/news\",\n  \"title\": \"Daily update\",\n  \"websiteApiUrl\": \"https://api.example.com/posts\"\n}",
-  );
+  const [inputJson, setInputJson] = useState<string>("");
+  const [savingInputPayload, setSavingInputPayload] = useState(false);
   const [run, setRun] = useState<RunModel | null>(null);
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunHistoryItem[]>([]);
   const [nodeRuns, setNodeRuns] = useState<NodeRunHistoryItem[]>([]);
+  type NodeRuntimeStatus = "pending" | "running" | "succeeded" | "failed";
+  const [nodeRuntimeStatus, setNodeRuntimeStatus] = useState<Record<string, NodeRuntimeStatus>>({});
+  const [nodeRuntimeError, setNodeRuntimeError] = useState<Record<string, string>>({});
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [activeRunStatus, setActiveRunStatus] = useState<"running" | "succeeded" | "failed" | "cancelled" | null>(null);
   const [loadingWorkflowRuns, setLoadingWorkflowRuns] = useState(false);
   const [loadingNodeRuns, setLoadingNodeRuns] = useState(false);
   const [nodeDraft, setNodeDraft] = useState<NodeConfigDraft>({
@@ -344,6 +404,7 @@ export default function WorkflowsPage() {
     promptTemplate: "",
     commandCode: "",
   });
+  const [edgeDraft, setEdgeDraft] = useState<{ conditionExpr: string; priority: number; isDefault: boolean }>({ conditionExpr: "", priority: 5, isDefault: false });
   const [metaSnapshotById, setMetaSnapshotById] = useState<Record<string, WorkflowMetaSnapshot>>({});
 
   const toolNameByCode = useMemo(() => {
@@ -390,7 +451,7 @@ export default function WorkflowsPage() {
     fromNodeId: String(raw.fromNodeId ?? ""),
     toNodeId: String(raw.toNodeId ?? ""),
     conditionExpr: raw.conditionExpr == null ? null : String(raw.conditionExpr),
-    priority: Number(raw.priority ?? 10),
+    priority: Number(raw.priority ?? 5),
     isDefault: Boolean(raw.isDefault),
   });
 
@@ -401,6 +462,12 @@ export default function WorkflowsPage() {
     description: raw.description == null ? null : String(raw.description),
     status: (String(raw.status ?? "draft") as WorkflowStatus),
     entryNodeId: raw.entryNodeId == null ? null : String(raw.entryNodeId),
+    inputPayload:
+      raw.inputPayload && typeof raw.inputPayload === "object"
+        ? (raw.inputPayload as Record<string, unknown>)
+        : raw.input_payload && typeof raw.input_payload === "object"
+          ? (raw.input_payload as Record<string, unknown>)
+          : null,
     version: Number(raw.version ?? 1),
     nodes: Array.isArray(raw.nodes) ? raw.nodes.map((item) => normalizeNode((item || {}) as Record<string, unknown>)) : [],
     edges: Array.isArray(raw.edges) ? raw.edges.map((item) => normalizeEdge((item || {}) as Record<string, unknown>)) : [],
@@ -439,6 +506,102 @@ export default function WorkflowsPage() {
     () => selectedWorkflow?.edges.find((e) => e.id === selectedEdgeId) || null,
     [selectedWorkflow, selectedEdgeId],
   );
+
+  useEffect(() => {
+    if (selectedEdge) {
+      setEdgeDraft({
+        conditionExpr: selectedEdge.conditionExpr || "",
+        priority: selectedEdge.priority ?? 5,
+        isDefault: selectedEdge.isDefault ?? false,
+      });
+    }
+  }, [selectedEdge]);
+
+  // Subscribe realtime workflow:* events -> tint node in canvas while run is in-flight.
+  // Nest WebChatGateway (namespace /webchat) broadcasts to `user:<uid>` room; we only
+  // filter by workflowId to avoid cross-workflow noise on the currently visible canvas.
+  useEffect(() => {
+    if (!selectedWorkflow?.id) return;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+    if (!apiUrl) return;
+
+    const socket: Socket = io(`${apiUrl}/webchat`, {
+      withCredentials: true,
+      transports: ["websocket", "polling"],
+    });
+
+    const onRunStarted = (p: {
+      runId: string;
+      workflowId: string;
+      entryNodeId: string | null;
+    }) => {
+      if (p.workflowId !== selectedWorkflow.id) return;
+      setActiveRunId(p.runId);
+      setActiveRunStatus("running");
+      setNodeRuntimeStatus(() => ({}));
+      setNodeRuntimeError(() => ({}));
+    };
+    const onNodeStarted = (p: { workflowId: string; nodeId: string }) => {
+      if (p.workflowId !== selectedWorkflow.id) return;
+      setNodeRuntimeStatus((prev) => ({ ...prev, [p.nodeId]: "running" }));
+      setNodeRuntimeError((prev) => {
+        if (!prev[p.nodeId]) return prev;
+        const { [p.nodeId]: _drop, ...rest } = prev;
+        return rest;
+      });
+    };
+    const onNodeSucceeded = (p: { workflowId: string; nodeId: string }) => {
+      if (p.workflowId !== selectedWorkflow.id) return;
+      setNodeRuntimeStatus((prev) => ({ ...prev, [p.nodeId]: "succeeded" }));
+    };
+    const onNodeFailed = (p: {
+      workflowId: string;
+      nodeId: string;
+      error: string;
+      willRetry: boolean;
+    }) => {
+      if (p.workflowId !== selectedWorkflow.id) return;
+      setNodeRuntimeStatus((prev) => ({
+        ...prev,
+        [p.nodeId]: p.willRetry ? "running" : "failed",
+      }));
+      if (!p.willRetry) {
+        setNodeRuntimeError((prev) => ({ ...prev, [p.nodeId]: p.error }));
+      }
+    };
+    const onRunFinished = (p: {
+      workflowId: string;
+      runId: string;
+      status: "succeeded" | "failed" | "cancelled";
+    }) => {
+      if (p.workflowId !== selectedWorkflow.id) return;
+      setActiveRunStatus(p.status);
+    };
+
+    socket.on("workflow:run:started", onRunStarted);
+    socket.on("workflow:node:started", onNodeStarted);
+    socket.on("workflow:node:succeeded", onNodeSucceeded);
+    socket.on("workflow:node:failed", onNodeFailed);
+    socket.on("workflow:run:finished", onRunFinished);
+
+    return () => {
+      socket.off("workflow:run:started", onRunStarted);
+      socket.off("workflow:node:started", onNodeStarted);
+      socket.off("workflow:node:succeeded", onNodeSucceeded);
+      socket.off("workflow:node:failed", onNodeFailed);
+      socket.off("workflow:run:finished", onRunFinished);
+      socket.disconnect();
+    };
+  }, [selectedWorkflow?.id]);
+
+  const hasEdgeDraftChanges = useMemo(() => {
+    if (!selectedEdge) return false;
+    return (
+      (selectedEdge.conditionExpr || "") !== edgeDraft.conditionExpr ||
+      (selectedEdge.priority ?? 5) !== edgeDraft.priority ||
+      (selectedEdge.isDefault ?? false) !== edgeDraft.isDefault
+    );
+  }, [selectedEdge, edgeDraft]);
 
   const hasMetadataChanges = useMemo(() => {
     if (!selectedWorkflow) return false;
@@ -673,6 +836,75 @@ export default function WorkflowsPage() {
     });
   }, [selectedNode?.id, selectedWorkflowId]);
 
+  useEffect(() => {
+    if (!selectedWorkflow) {
+      setInputJson("");
+      return;
+    }
+    const payload = selectedWorkflow.inputPayload;
+    if (payload && typeof payload === "object") {
+      try {
+        setInputJson(JSON.stringify(payload, null, 2));
+        return;
+      } catch {
+        // fallthrough to empty
+      }
+    }
+    setInputJson("{}");
+  }, [selectedWorkflow?.id, selectedWorkflow?.inputPayload]);
+
+  const hasInputPayloadChanges = useMemo(() => {
+    if (!selectedWorkflow) return false;
+    let parsed: Record<string, unknown> | null = null;
+    const trimmed = inputJson.trim();
+    if (trimmed === "") {
+      parsed = null;
+    } else {
+      try {
+        const value = JSON.parse(trimmed);
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          parsed = value as Record<string, unknown>;
+        } else {
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    }
+    const current = selectedWorkflow.inputPayload ?? null;
+    return JSON.stringify(parsed) !== JSON.stringify(current);
+  }, [inputJson, selectedWorkflow?.id, selectedWorkflow?.inputPayload]);
+
+  const onSaveInputPayload = async () => {
+    if (!selectedWorkflow) return;
+    const trimmed = inputJson.trim();
+    let nextPayload: Record<string, unknown> | null = null;
+    if (trimmed !== "") {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          setSaveError(tr("workflowsUi.inputPayloadInvalid", "Input payload must be a JSON object."));
+          return;
+        }
+        nextPayload = parsed as Record<string, unknown>;
+      } catch {
+        setSaveError(tr("workflowsUi.inputPayloadInvalid", "Input payload must be a JSON object."));
+        return;
+      }
+    }
+    setSavingInputPayload(true);
+    setSaveError(null);
+    try {
+      await updateWorkflowMetaApi(selectedWorkflow.id, { inputPayload: nextPayload });
+      upsertWorkflow({ ...selectedWorkflow, inputPayload: nextPayload });
+      setLastSavedAt(Date.now());
+    } catch (_error) {
+      setSaveError(tr("workflowsUi.inputPayloadSaveError", "Could not save input payload."));
+    } finally {
+      setSavingInputPayload(false);
+    }
+  };
+
   const upsertWorkflow = (next: WorkflowModel) => {
     setWorkflows((prev) => prev.map((w) => (w.id === next.id ? next : w)));
   };
@@ -695,7 +927,7 @@ export default function WorkflowsPage() {
           fromNodeId,
           toNodeId,
           conditionExpr: extra?.conditionExpr ?? null,
-          priority: extra?.priority ?? 10,
+          priority: extra?.priority ?? 5,
           isDefault: extra?.isDefault ?? false,
         },
       ],
@@ -771,6 +1003,54 @@ export default function WorkflowsPage() {
     }
   };
 
+  const onDeleteWorkflow = async () => {
+    if (!selectedWorkflow || deletingWorkflow) return;
+    const wf = selectedWorkflow;
+    const ok = window.confirm(
+      tr(
+        "workflowsUi.deleteWorkflowConfirm",
+        "Delete this workflow permanently? All nodes, edges, and related data will be removed.",
+      ),
+    );
+    if (!ok) return;
+    setDeletingWorkflow(true);
+    setLoadError(null);
+    try {
+      await deleteWorkflowApi(wf.id);
+      const prevList = workflows;
+      const idx = prevList.findIndex((w) => w.id === wf.id);
+      const filtered = prevList.filter((w) => w.id !== wf.id);
+      setWorkflows(filtered);
+      setMetaSnapshotById((snap) => {
+        const next = { ...snap };
+        delete next[wf.id];
+        return next;
+      });
+      setSelectedEdgeId(null);
+      setSelectedNodeId(null);
+      setConnectFromNodeId(null);
+      setPendingConnect(null);
+      setDirty(false);
+      setRun(null);
+      setWorkflowRuns([]);
+      setNodeRuns([]);
+      setVersionConflict(false);
+      if (selectedWorkflowId === wf.id) {
+        if (filtered.length === 0) {
+          setSelectedWorkflowId("");
+        } else if (idx <= 0) {
+          setSelectedWorkflowId(filtered[0].id);
+        } else {
+          setSelectedWorkflowId(filtered[idx - 1].id);
+        }
+      }
+    } catch (_error) {
+      setLoadError(tr("workflowsUi.deleteWorkflowError", "Could not delete workflow."));
+    } finally {
+      setDeletingWorkflow(false);
+    }
+  };
+
   const onAddNode = () => {
     if (!selectedWorkflow) return;
     const id = makeId();
@@ -825,19 +1105,27 @@ export default function WorkflowsPage() {
     setDirty(true);
   };
 
-  const onCanvasMouseMove: React.MouseEventHandler<HTMLDivElement> = (e) => {
+  const onCanvasPointerMove: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    if (originalPinchDist > 0) return;
+    if (isPanning) {
+      setPanOffset({
+        x: panStartOffset.x + (e.clientX - panStartUserPos.x),
+        y: panStartOffset.y + (e.clientY - panStartUserPos.y),
+      });
+      return;
+    }
     if (!selectedWorkflow || !dragNodeId) return;
     const canvasRect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-    const x = e.clientX - canvasRect.left - dragOffset.x;
-    const y = e.clientY - canvasRect.top - dragOffset.y;
+    const x = (e.clientX - canvasRect.left - panOffset.x) / zoom - dragOffset.x;
+    const y = (e.clientY - canvasRect.top - panOffset.y) / zoom - dragOffset.y;
     const next = {
       ...selectedWorkflow,
       nodes: selectedWorkflow.nodes.map((n) =>
         n.id === dragNodeId
           ? {
               ...n,
-              posX: Math.max(0, Math.min(x, canvasRect.width - 220)),
-              posY: Math.max(0, Math.min(y, canvasRect.height - 140)),
+              posX: Math.max(-10000, Math.min(x, 10000)),
+              posY: Math.max(-10000, Math.min(y, 10000)),
             }
           : n,
       ),
@@ -913,6 +1201,30 @@ export default function WorkflowsPage() {
     }
   };
 
+  const latestOnSaveGraph = useRef(onSaveGraph);
+  latestOnSaveGraph.current = onSaveGraph;
+
+  useEffect(() => {
+    if (!dirty || saving) return;
+    const timer = setTimeout(() => {
+      latestOnSaveGraph.current();
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [dirty, saving, selectedWorkflow]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "F5")) {
+        e.preventDefault();
+        if (dirty && !saving) {
+          latestOnSaveGraph.current();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dirty, saving]);
+
   const onSaveMetadata = async () => {
     if (!selectedWorkflow) return;
     setSavingMeta(true);
@@ -956,6 +1268,9 @@ export default function WorkflowsPage() {
     if (!selectedWorkflow) return;
     setRunningWorkflow(true);
     setRun(null);
+    setNodeRuntimeStatus({});
+    setNodeRuntimeError({});
+    setActiveRunStatus("running");
     try {
       const parsedInput = JSON.parse(inputJson || "{}") as Record<string, unknown>;
       const runRes = await runWorkflowApi(selectedWorkflow.id, {
@@ -1057,6 +1372,26 @@ export default function WorkflowsPage() {
               commandCode: nodeDraft.commandCode.trim() || null,
             }
           : n,
+      ),
+    };
+    upsertWorkflow(next);
+    setDirty(true);
+    await onSaveGraph(next);
+  };
+
+  const onSaveEdgeConfig = async () => {
+    if (!selectedWorkflow || !selectedEdge) return;
+    const next: WorkflowModel = {
+      ...selectedWorkflow,
+      edges: selectedWorkflow.edges.map((ed) =>
+        ed.id === selectedEdge.id
+          ? {
+              ...ed,
+              conditionExpr: edgeDraft.conditionExpr.trim() || null,
+              priority: edgeDraft.priority,
+              isDefault: edgeDraft.isDefault,
+            }
+          : ed,
       ),
     };
     upsertWorkflow(next);
@@ -1261,10 +1596,22 @@ export default function WorkflowsPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedWorkflow, selectedEdgeId]);
 
+  useEffect(() => {
+    if (!canvasFullscreen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCanvasFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [canvasFullscreen]);
+
   return (
-    <div className="h-[calc(100vh-3rem)] min-h-0">
-      <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[290px_1fr_370px]">
-        <section className="min-h-0 rounded-xl border border-red-200 bg-white p-3">
+    <div className="relative flex-1 flex flex-col h-full w-full min-h-[600px] overflow-hidden bg-slate-50">
+      <div className="relative h-full w-full">
+        <section className={`pointer-events-auto absolute bottom-4 left-4 top-4 z-20 flex w-[320px] flex-col overflow-y-auto rounded-3xl border border-white/60 bg-white/70 p-5 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 ${canvasFullscreen ? "hidden" : ""}`}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">{tr("workflowsUi.workflows", "Workflows")}</h2>
             <button
@@ -1291,14 +1638,23 @@ export default function WorkflowsPage() {
                     setSelectedEdgeId(null);
                     setConnectFromNodeId(null);
                   }}
-                  className={`w-full rounded-lg border px-3 py-2 text-left ${
+                  className={`min-w-0 w-full rounded-lg border px-3 py-1.5 text-left ${
                     active
                       ? "border-red-600 bg-red-100 text-red-800"
                       : "border-red-200 bg-white text-zinc-700 hover:bg-red-50"
                   }`}
                 >
-                  <p className="text-sm font-semibold">{wf.name}</p>
-                  <p className="text-xs">v{wf.version} - {wf.status}</p>
+                  <p className="truncate text-xs font-semibold leading-tight" title={wf.name}>
+                    {wf.name}
+                  </p>
+                  <p
+                    className={`mt-0.5 truncate text-[11px] leading-tight ${
+                      active ? "text-red-900/70" : "text-zinc-600"
+                    }`}
+                    title={`v${wf.version} - ${wf.status}`}
+                  >
+                    v{wf.version} - {wf.status}
+                  </p>
                 </button>
               );
             })}
@@ -1372,6 +1728,14 @@ export default function WorkflowsPage() {
               >
                 {savingMeta ? tr("workflowsUi.saving", "Saving...") : tr("workflowsUi.saveMeta", "Save Info")}
               </button>
+              <button
+                type="button"
+                onClick={() => void onDeleteWorkflow()}
+                disabled={deletingWorkflow || savingMeta}
+                className="w-full rounded border border-red-400 bg-white px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deletingWorkflow ? tr("workflowsUi.deletingWorkflow", "Deleting...") : tr("workflowsUi.deleteWorkflow", "Delete workflow")}
+              </button>
               <label className="block text-xs text-zinc-600">{tr("workflowsUi.status", "Status")}</label>
               <select
                 value={selectedWorkflow.status}
@@ -1426,26 +1790,120 @@ export default function WorkflowsPage() {
           )}
         </section>
 
-        <section className="min-h-0 rounded-xl border border-red-200 bg-white p-3">
-          <div className="mb-3 flex w-full items-center justify-between">
-            <div className="flex gap-2">
+        <section className="absolute inset-0 z-10">
+          <div className="pointer-events-auto absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center justify-between gap-6 rounded-2xl border border-white/60 bg-white/70 px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.06)] backdrop-blur-xl">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCanvasFullscreen((v) => !v)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-300 bg-white text-red-700 hover:bg-red-50"
+                aria-label={
+                  canvasFullscreen
+                    ? tr("workflowsUi.exitFullscreen", "Exit fullscreen (ESC)")
+                    : tr("workflowsUi.enterFullscreen", "Expand canvas")
+                }
+                title={
+                  canvasFullscreen
+                    ? tr("workflowsUi.exitFullscreen", "Exit fullscreen (ESC)")
+                    : tr("workflowsUi.enterFullscreen", "Expand canvas")
+                }
+              >
+                {canvasFullscreen ? (
+                  <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                    <path
+                      d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                    <path
+                      d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => {
                   if (!selectedWorkflow || selectedWorkflow.nodes.length === 0) return;
-                  const sorted = [...selectedWorkflow.nodes].sort((a, b) => a.posX - b.posX || a.posY - b.posY);
-                  const nextEdges: EdgeModel[] = sorted.slice(0, -1).map((node, idx) => ({
-                    id: makeId(),
-                    fromNodeId: node.id,
-                    toNodeId: sorted[idx + 1].id,
-                    conditionExpr: null,
-                    priority: idx + 1,
-                    isDefault: true,
-                  }));
+                  
+                  const edges = selectedWorkflow.edges;
+                  const nodes = selectedWorkflow.nodes;
+                  
+                  const outEdges = new Map<string, string[]>();
+                  const inDegree = new Map<string, number>();
+                  nodes.forEach(n => {
+                    outEdges.set(n.id, []);
+                    inDegree.set(n.id, 0);
+                  });
+                  
+                  edges.forEach(e => {
+                    if (outEdges.has(e.fromNodeId) && inDegree.has(e.toNodeId)) {
+                      outEdges.get(e.fromNodeId)!.push(e.toNodeId);
+                      inDegree.set(e.toNodeId, inDegree.get(e.toNodeId)! + 1);
+                    }
+                  });
+                  
+                  let roots: string[] = [];
+                  for (const [id, deg] of inDegree.entries()) if (deg === 0) roots.push(id);
+                  if (selectedWorkflow.entryNodeId && !roots.includes(selectedWorkflow.entryNodeId)) roots.push(selectedWorkflow.entryNodeId);
+                  if (roots.length === 0) roots = [nodes[0].id];
+                  
+                  const layers = new Map<string, number>();
+                  roots.forEach(r => layers.set(r, 0));
+                  
+                  let queue = [...roots];
+                  let safety = 10000;
+                  while (queue.length > 0 && safety-- > 0) {
+                     const curr = queue.shift()!;
+                     const currentLayer = layers.get(curr) || 0;
+                     const children = outEdges.get(curr) || [];
+                     for (const child of children) {
+                        const nextLayer = currentLayer + 1;
+                        if (nextLayer > nodes.length + 2) continue;
+                        if (!layers.has(child) || layers.get(child)! < nextLayer) {
+                           layers.set(child, nextLayer);
+                           queue.push(child);
+                        }
+                     }
+                  }
+                  
+                  nodes.forEach(n => {
+                     if (!layers.has(n.id)) layers.set(n.id, 0);
+                  });
+                  
+                  const nodesByLayer = new Map<number, typeof nodes>();
+                  for (const n of nodes) {
+                     const l = layers.get(n.id) || 0;
+                     if (!nodesByLayer.has(l)) nodesByLayer.set(l, []);
+                     nodesByLayer.get(l)!.push(n);
+                  }
+                  
+                  const LAYER_WIDTH = 450;
+                  const VERTICAL_SPACING = 250;
+                  const newNodes = nodes.map(n => {
+                     const l = layers.get(n.id) || 0;
+                     const layerNodes = nodesByLayer.get(l)!;
+                     const idx = layerNodes.findIndex(x => x.id === n.id);
+                     const startY = 300 - ((layerNodes.length - 1) * VERTICAL_SPACING) / 2;
+                     return {
+                        ...n,
+                        posX: 200 + l * LAYER_WIDTH,
+                        posY: startY + idx * VERTICAL_SPACING
+                     };
+                  });
+                  
                   upsertWorkflow({
                     ...selectedWorkflow,
-                    entryNodeId: sorted[0]?.id || selectedWorkflow.entryNodeId,
-                    edges: nextEdges,
+                    nodes: newNodes,
                   });
                   setDirty(true);
                 }}
@@ -1491,6 +1949,19 @@ export default function WorkflowsPage() {
                 </div>
               )}
             </div>
+            <div className="flex gap-2 items-center bg-white/50 backdrop-blur rounded-lg px-2 py-1 shadow-sm border border-zinc-200">
+              <button
+                type="button"
+                onClick={() => setZoom(z => Math.max(0.1, z - 0.1))}
+                className="flex h-6 w-6 items-center justify-center rounded-md font-bold text-zinc-600 hover:bg-zinc-200"
+              >-</button>
+              <span className="text-xs font-medium w-12 text-center text-zinc-600">{Math.round(zoom * 100)}%</span>
+              <button
+                type="button"
+                onClick={() => setZoom(z => Math.min(3, z + 0.1))}
+                className="flex h-6 w-6 items-center justify-center rounded-md font-bold text-zinc-600 hover:bg-zinc-200"
+              >+</button>
+            </div>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -1513,37 +1984,84 @@ export default function WorkflowsPage() {
           </div>
 
           <div
-            className="relative h-[calc(100%-5.2rem)] min-h-[520px] overflow-hidden rounded-lg border border-dashed border-red-300 bg-red-50/30"
-            onMouseMove={onCanvasMouseMove}
-            onMouseUp={(e) => {
+            id="canvas-wrapper"
+            className={`pointer-events-auto absolute inset-0 z-0 h-full w-full overflow-hidden touch-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
+            style={{ backgroundImage: "radial-gradient(#cbd5e1 1px, transparent 1px)", backgroundSize: `${24 * zoom}px ${24 * zoom}px`, backgroundPosition: `${panOffset.x}px ${panOffset.y}px` }}
+            onTouchStart={(e) => {
+              if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                setOriginalPinchDist(Math.hypot(dx, dy));
+                setOriginalPinchZoom(zoom);
+                setIsPanning(false);
+              }
+            }}
+            onTouchMove={(e) => {
+              if (e.touches.length === 2 && originalPinchDist > 0) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                setZoom(Math.max(0.1, Math.min(originalPinchZoom * (dist / originalPinchDist), 4)));
+              }
+            }}
+            onTouchEnd={(e) => {
+              if (e.touches.length < 2) {
+                setOriginalPinchDist(0);
+              }
+            }}
+            onWheel={(e) => {
+              if (e.ctrlKey || e.metaKey) {
+                setZoom((z) => Math.max(0.1, Math.min(z - e.deltaY * 0.005, 3)));
+              } else {
+                setPanOffset((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+              }
+            }}
+            onPointerMove={onCanvasPointerMove}
+            onPointerUp={(e) => {
               setDragNodeId(null);
-              // Only cancel pending connect when mouse is released on empty canvas.
+              setIsPanning(false);
               if (pendingConnect && e.target === e.currentTarget) {
                 setPendingConnect(null);
               }
             }}
-            onMouseLeave={() => setDragNodeId(null)}
-            onMouseMoveCapture={(e) => {
+            onPointerLeave={() => { setDragNodeId(null); setIsPanning(false); }}
+            onPointerMoveCapture={(e) => {
               const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-              setMouseCanvasPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+              setMouseCanvasPos({ x: (e.clientX - rect.left - panOffset.x) / zoom, y: (e.clientY - rect.top - panOffset.y) / zoom });
+            }}
+            onPointerDown={(e) => {
+              const target = e.target as HTMLElement;
+              if (target.id === "canvas-wrapper" || target.id === "canvas-layer" || target.tagName.toLowerCase() === "svg") {
+                setIsPanning(true);
+                setPanStartUserPos({ x: e.clientX, y: e.clientY });
+                setPanStartOffset(panOffset);
+                (e.target as HTMLElement).setPointerCapture(e.pointerId);
+              }
+            }}
+            onDoubleClick={(e) => {
+              const target = e.target as HTMLElement;
+              if (target.id === "canvas-wrapper" || target.id === "canvas-layer" || target.tagName.toLowerCase() === "svg") {
+                setZoom(1);
+                setPanOffset({ x: 0, y: 0 });
+              }
             }}
           >
-            <svg className="pointer-events-none absolute inset-0 h-full w-full">
+            <div id="canvas-layer" style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`, transformOrigin: '0 0', width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}>
+            <svg
+              className="pointer-events-none absolute inset-0 h-full w-full"
+              style={{ overflow: "visible" }}
+            >
               {selectedWorkflow?.edges.map((edge) => {
                 const from = selectedWorkflow.nodes.find((n) => n.id === edge.fromNodeId);
                 const to = selectedWorkflow.nodes.find((n) => n.id === edge.toNodeId);
                 if (!from || !to) return null;
-                const x1 = from.posX + 210;
-                const y1 = from.posY + 44;
-                const x2 = to.posX;
-                const y2 = to.posY + 44;
-                const midX = (x1 + x2) / 2;
+                const pts = getSmartEdgePoints({ x: from.posX, y: from.posY, w: 220, h: 88 }, { x: to.posX, y: to.posY, w: 220, h: 88 });
                 const active = selectedEdgeId === edge.id;
                 const stroke = edge.isDefault ? "#94a3b8" : "#22c55e";
                 return (
                   <g key={edge.id}>
                     <path
-                      d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
+                      d={`M ${pts.x1} ${pts.y1} C ${pts.c1x} ${pts.c1y}, ${pts.c2x} ${pts.c2y}, ${pts.x2} ${pts.y2}`}
                       fill="none"
                       stroke={active ? "#dc2626" : stroke}
                       strokeWidth={active ? 3 : 2}
@@ -1554,14 +2072,10 @@ export default function WorkflowsPage() {
               {pendingConnect && (() => {
                 const sourceNode = getNodeById(pendingConnect.sourceId);
                 if (!sourceNode) return null;
-                const x1 = sourceNode.posX + 210;
-                const y1 = sourceNode.posY + 44;
-                const x2 = mouseCanvasPos.x;
-                const y2 = mouseCanvasPos.y;
-                const midX = (x1 + x2) / 2;
+                const pts = getSmartEdgePoints({ x: sourceNode.posX, y: sourceNode.posY, w: 220, h: 88 }, { x: mouseCanvasPos.x, y: mouseCanvasPos.y, w: 0, h: 0 });
                 return (
                   <path
-                    d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
+                    d={`M ${pts.x1} ${pts.y1} C ${pts.c1x} ${pts.c1y}, ${pts.c2x} ${pts.c2y}, ${pts.x2} ${pts.y2}`}
                     fill="none"
                     stroke="#f59e0b"
                     strokeDasharray="6 4"
@@ -1575,11 +2089,9 @@ export default function WorkflowsPage() {
               const from = selectedWorkflow.nodes.find((n) => n.id === edge.fromNodeId);
               const to = selectedWorkflow.nodes.find((n) => n.id === edge.toNodeId);
               if (!from || !to) return null;
-              const x1 = from.posX + 210;
-              const y1 = from.posY + 44;
-              const x2 = to.posX;
-              const y2 = to.posY + 44;
-              const midX = (x1 + x2) / 2;
+              const pts = getSmartEdgePoints({ x: from.posX, y: from.posY, w: 220, h: 88 }, { x: to.posX, y: to.posY, w: 220, h: 88 });
+              const labelX = (pts.x1 + pts.x2) / 2;
+              const labelY = (pts.y1 + pts.y2) / 2;
               return (
                 <React.Fragment key={`edge-ui-${edge.id}`}>
                   <button
@@ -1591,16 +2103,16 @@ export default function WorkflowsPage() {
                     className={`absolute rounded px-1.5 py-0.5 text-[10px] ${
                       edge.isDefault ? "bg-zinc-200 text-zinc-700" : "bg-green-200 text-green-800"
                     }`}
-                    style={{ left: midX - 22, top: (y1 + y2) / 2 - 12 }}
+                    style={{ left: labelX - 22, top: labelY - 12 }}
                   >
                     {edge.isDefault ? tr("workflowsUi.default", "default") : tr("workflowsUi.if", "if")} #{flowNumbering.edgeOrderIndex[edge.id] || 1}
                   </button>
                   <button
                     type="button"
                     className="absolute h-3 w-3 rounded-full border border-red-300 bg-white"
-                    style={{ left: x1 - 6, top: y1 - 6 }}
+                    style={{ left: pts.x1 - 6, top: pts.y1 - 6 }}
                     title={tr("workflowsUi.reconnectFrom", "Reconnect from")}
-                    onMouseDown={(e) => {
+                    onPointerDown={(e) => {
                       e.stopPropagation();
                       setPendingConnect({
                         sourceId: edge.fromNodeId,
@@ -1612,9 +2124,9 @@ export default function WorkflowsPage() {
                   <button
                     type="button"
                     className="absolute h-3 w-3 rounded-full border border-red-300 bg-white"
-                    style={{ left: x2 - 6, top: y2 - 6 }}
+                    style={{ left: pts.x2 - 6, top: pts.y2 - 6 }}
                     title={tr("workflowsUi.reconnectTo", "Reconnect to")}
-                    onMouseDown={(e) => {
+                    onPointerDown={(e) => {
                       e.stopPropagation();
                       setPendingConnect({
                         sourceId: edge.fromNodeId,
@@ -1634,17 +2146,30 @@ export default function WorkflowsPage() {
               const isConnectFrom = connectFromNodeId === node.id;
               const meta = flowNumbering.nodeMeta[node.id];
               const isUnreachable = meta?.flowOrderLabel === "unreachable";
+              const runtime = nodeRuntimeStatus[node.id];
+              const runtimeErr = nodeRuntimeError[node.id];
+              const runtimeClass =
+                runtime === "running"
+                  ? "border-blue-500 bg-blue-50/70 animate-pulse"
+                  : runtime === "succeeded"
+                    ? "border-emerald-500 bg-emerald-50/70"
+                    : runtime === "failed"
+                      ? "border-rose-500 bg-rose-50/70"
+                      : null;
               return (
                 <div
                   key={node.id}
                   className={`absolute w-[210px] rounded-xl border bg-white p-3 shadow-sm ${
-                    isUnreachable
-                      ? "border-amber-500 bg-amber-50/60"
-                      : active
-                        ? "border-red-600"
-                        : "border-red-200"
+                    runtimeClass
+                      ? runtimeClass
+                      : isUnreachable
+                        ? "border-amber-500 bg-amber-50/60"
+                        : active
+                          ? "border-red-600"
+                          : "border-red-200"
                   }`}
                   style={{ left: node.posX, top: node.posY }}
+                  title={runtimeErr || undefined}
                   onMouseUp={(e) => {
                     if (!pendingConnect) return;
                     e.stopPropagation();
@@ -1653,10 +2178,12 @@ export default function WorkflowsPage() {
                 >
                   <div
                     className="cursor-move"
-                    onMouseDown={(e) => {
+                    onPointerDown={(e) => {
                       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
                       setDragNodeId(node.id);
-                      setDragOffset({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                      setDragOffset({ x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom });
+                      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                      e.stopPropagation();
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1679,6 +2206,24 @@ export default function WorkflowsPage() {
                         >
                           {meta?.flowOrderLabel || "-"}
                         </span>
+                        {runtime && (
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                              runtime === "running"
+                                ? "bg-blue-100 text-blue-700"
+                                : runtime === "succeeded"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-rose-100 text-rose-700"
+                            }`}
+                            title={runtimeErr || undefined}
+                          >
+                            {runtime === "running"
+                              ? tr("workflowsUi.statusRunning", "running")
+                              : runtime === "succeeded"
+                                ? tr("workflowsUi.statusSucceeded", "ok")
+                                : tr("workflowsUi.statusFailed", "failed")}
+                          </span>
+                        )}
                         {isEntry && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">{tr("workflowsUi.entry", "entry")}</span>}
                       </div>
                     </div>
@@ -1717,7 +2262,7 @@ export default function WorkflowsPage() {
                     <button
                       type="button"
                       title={tr("workflowsUi.sourceHandle", "Source handle")}
-                      onMouseDown={(e) => {
+                      onPointerDown={(e) => {
                         e.stopPropagation();
                         setConnectFromNodeId(node.id);
                         setPendingConnect({
@@ -1738,10 +2283,11 @@ export default function WorkflowsPage() {
                 </div>
               );
             })}
+            </div>
           </div>
         </section>
 
-        <section className="min-h-0 space-y-3 rounded-xl border border-red-200 bg-white p-3">
+        <section className={`pointer-events-auto absolute bottom-4 right-4 top-4 z-20 flex w-[360px] flex-col space-y-4 overflow-y-auto rounded-3xl border border-white/60 bg-white/70 p-5 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 ${canvasFullscreen ? "hidden" : ""}`}>
           <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">{tr("workflowsUi.inspectorRun", "Inspector + Run")}</h2>
 
           {selectedWorkflow && selectedNode && (
@@ -1834,52 +2380,39 @@ export default function WorkflowsPage() {
               <p className="text-xs font-semibold text-red-700">{tr("workflowsUi.edgeConfig", "Edge Config")}</p>
               <label className="text-xs text-zinc-600">{tr("workflowsUi.conditionExpr", "conditionExpr")}</label>
               <input
-                value={selectedEdge.conditionExpr || ""}
-                onChange={(e) => {
-                  const next = {
-                    ...selectedWorkflow,
-                    edges: selectedWorkflow.edges.map((ed) =>
-                      ed.id === selectedEdge.id ? { ...ed, conditionExpr: e.target.value || null } : ed,
-                    ),
-                  };
-                  upsertWorkflow(next);
-                  setDirty(true);
-                }}
+                value={edgeDraft.conditionExpr}
+                onChange={(e) => setEdgeDraft((prev) => ({ ...prev, conditionExpr: e.target.value }))}
                 className="w-full rounded border border-red-300 px-2 py-1 text-xs"
               />
-              <label className="text-xs text-zinc-600">{tr("workflowsUi.priority", "priority")}</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-zinc-700">{tr("workflowsUi.maxRetries", "Số lần thử lại tối đa (nếu lỗi)")}</label>
+                <div className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{edgeDraft.priority} lần</div>
+              </div>
               <input
-                type="number"
-                value={selectedEdge.priority}
-                onChange={(e) => {
-                  const next = {
-                    ...selectedWorkflow,
-                    edges: selectedWorkflow.edges.map((ed) =>
-                      ed.id === selectedEdge.id ? { ...ed, priority: Number(e.target.value) } : ed,
-                    ),
-                  };
-                  upsertWorkflow(next);
-                  setDirty(true);
-                }}
-                className="w-full rounded border border-red-300 px-2 py-1 text-xs"
+                type="range"
+                min="1"
+                max="10"
+                step="1"
+                value={edgeDraft.priority}
+                onChange={(e) => setEdgeDraft((prev) => ({ ...prev, priority: Number(e.target.value) }))}
+                className="w-full accent-[rgb(173,8,8)]"
               />
               <label className="flex items-center gap-2 text-xs text-zinc-700">
                 <input
                   type="checkbox"
-                  checked={selectedEdge.isDefault}
-                  onChange={(e) => {
-                    const next = {
-                      ...selectedWorkflow,
-                      edges: selectedWorkflow.edges.map((ed) =>
-                        ed.id === selectedEdge.id ? { ...ed, isDefault: e.target.checked } : ed,
-                      ),
-                    };
-                    upsertWorkflow(next);
-                    setDirty(true);
-                  }}
+                  checked={edgeDraft.isDefault}
+                  onChange={(e) => setEdgeDraft((prev) => ({ ...prev, isDefault: e.target.checked }))}
                 />
                 {tr("workflowsUi.isDefault", "isDefault")}
               </label>
+              <button
+                type="button"
+                onClick={() => void onSaveEdgeConfig()}
+                disabled={saving || !hasEdgeDraftChanges}
+                className="w-full rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200 disabled:opacity-50"
+              >
+                {tr("workflowsUi.saveEdgeConfig", "Lưu thuộc tính Edge")}
+              </button>
               <button
                 type="button"
                 onClick={() => onDeleteEdge(selectedEdge.id)}
@@ -1893,14 +2426,36 @@ export default function WorkflowsPage() {
           <div className="space-y-2 rounded-lg border border-red-200 p-2">
             {!selectedNode && (
               <>
-                <p className="text-xs font-semibold text-[rgb(173,8,8)]">
-                  {tr("workflowsUi.runWorkflowMock", "Run Workflow")}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-[rgb(173,8,8)]">
+                    {tr("workflowsUi.runWorkflowMock", "Run Workflow")}
+                  </p>
+                  <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    {tr("workflowsUi.inputPayloadLabel", "Input payload")}
+                  </span>
+                </div>
                 <textarea
                   value={inputJson}
                   onChange={(e) => setInputJson(e.target.value)}
-                  className="min-h-24 w-full rounded border border-red-300 px-2 py-1 text-xs font-mono"
+                  placeholder={'{\n  "key": "value"\n}'}
+                  className="min-h-96 w-full max-w-full resize-y rounded border border-red-300 px-2 py-1 text-xs font-mono"
                 />
+                <p className="text-[10px] leading-snug text-zinc-500">
+                  {tr(
+                    "workflowsUi.inputPayloadHint",
+                    "JSON object used as default input when running this workflow.",
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void onSaveInputPayload()}
+                  disabled={!selectedWorkflow || savingInputPayload || !hasInputPayloadChanges}
+                  className="w-full rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingInputPayload
+                    ? tr("workflowsUi.savingInputPayload", "Saving...")
+                    : tr("workflowsUi.saveInputPayload", "Save payload")}
+                </button>
               </>
             )}
             {!selectedNode && (
@@ -1912,6 +2467,22 @@ export default function WorkflowsPage() {
               >
                 {runningWorkflow ? tr("workflowsUi.running", "Running...") : tr("workflowsUi.runTest", "Run")}
               </button>
+            )}
+            {!selectedNode && activeRunId && activeRunStatus && (
+              <div
+                className={`flex items-center justify-between rounded px-2 py-1 text-[11px] ${
+                  activeRunStatus === "running"
+                    ? "bg-blue-50 text-blue-700"
+                    : activeRunStatus === "succeeded"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-rose-50 text-rose-700"
+                }`}
+              >
+                <span className="truncate">
+                  {tr("workflowsUi.runId", "Run")}: <span className="font-mono">{activeRunId.slice(0, 8)}</span>
+                </span>
+                <span className="font-medium uppercase">{activeRunStatus}</span>
+              </div>
             )}
             {!selectedNode && (
               <div className="rounded border border-red-200 bg-red-50/50 p-2">

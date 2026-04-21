@@ -38,6 +38,7 @@ export type WorkflowSummary = {
   status: WorkflowStatus;
   entryNodeId: string | null;
   version: number;
+  inputPayload?: Record<string, unknown> | null;
 };
 
 export type WorkflowGraph = {
@@ -130,9 +131,26 @@ export const createWorkflow = async (payload: {
 
 export const updateWorkflowMeta = async (
   workflowId: string,
-  payload: { code?: string; name?: string; description?: string | null },
+  payload: {
+    code?: string;
+    name?: string;
+    description?: string | null;
+    inputPayload?: Record<string, unknown> | null;
+  },
 ) => {
   const response = await axiosClient.patch<ApiResponse<unknown>>(`/agent/workflows/${workflowId}`, payload);
+  return response.data;
+};
+
+export type DeleteWorkflowResult = {
+  deleted: boolean;
+  id: string;
+};
+
+export const deleteWorkflow = async (workflowId: string) => {
+  const response = await axiosClient.delete<ApiResponse<DeleteWorkflowResult>>(
+    `/agent/workflows/${workflowId}`,
+  );
   return response.data;
 };
 
