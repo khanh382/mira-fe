@@ -16,6 +16,7 @@ import {
   Sun,
   User,
   Users,
+  Webhook,
   Workflow,
 } from "lucide-react";
 
@@ -47,7 +48,10 @@ export default function AppSidebar({ collapsed, theme, onToggleCollapse, onToggl
     { href: "/websites", label: t("sidebar.myWebsites"), icon: Globe },
     { href: "/account/profile", label: t("sidebar.profile"), icon: User },
     ...(user?.level === "owner"
-      ? [{ href: "/account/user-management", label: t("sidebar.userManagement"), icon: Users }]
+      ? [
+          { href: "/account/user-management", label: t("sidebar.userManagement"), icon: Users },
+          { href: "/webhooks", label: t("sidebar.webhooks"), icon: Webhook },
+        ]
       : []),
     { href: "/bot-config", label: t("sidebar.botConfig"), icon: Bot },
     { href: "/settings", label: t("sidebar.settings"), icon: Settings },
