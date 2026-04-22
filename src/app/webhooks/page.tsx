@@ -19,6 +19,33 @@ import {
   type UsageSummary,
 } from "@/services/ConnectWebhookService";
 
+/** Public HTTP API paths (after `NEXT_PUBLIC_API_URL` host, include global `/api/v1` prefix). */
+const CW_PUBLIC_CHAT_PATH = "/api/v1/connect-webhooks/v1/chat";
+const CW_PUBLIC_WEBHOOK_ALIAS_PATH = "/api/v1/connect-webhooks/v1/webhook/chat";
+
+const CW_SUCCESS_RESPONSE_EXAMPLE = `{
+  "model": "openrouter/deepseek/deepseek-chat",
+  "content": "2 + 2 = 4.",
+  "usage": {
+    "promptTokens": 42,
+    "completionTokens": 8,
+    "totalTokens": 50
+  },
+  "finishReason": "stop",
+  "routing": {
+    "intent": "reasoning",
+    "tier": "skill",
+    "reason": "intent=reasoning, user=client",
+    "fallback": false
+  }
+}`;
+
+const CW_ERR_400_EXAMPLE = `{
+  "statusCode": 400,
+  "message": "Only system, user, and assistant roles are allowed (no tools)",
+  "error": "Bad Request"
+}`;
+
 function PageChrome({ children }: { children: React.ReactNode }) {
   return <div className="w-full space-y-4 p-4">{children}</div>;
 }
@@ -182,11 +209,49 @@ export default function WebhooksPage() {
     [items],
   );
 
-  const thirdPartyChatUrl = useMemo(() => {
-    const base = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
-    if (!base) return "";
-    return `${base}/connect-webhooks/v1/chat`;
-  }, []);
+  const publicApiBase = useMemo(() => (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, ""), []);
+  const fullChatUrl = useMemo(
+    () => (publicApiBase ? `${publicApiBase}${CW_PUBLIC_CHAT_PATH}` : ""),
+    [publicApiBase],
+  );
+  const fullWebhookAliasUrl = useMemo(
+    () => (publicApiBase ? `${publicApiBase}${CW_PUBLIC_WEBHOOK_ALIAS_PATH}` : ""),
+    [publicApiBase],
+  );
+
+  const curlChatExample = useMemo(() => {
+    const host = publicApiBase || "https://YOUR_HOST";
+    const url = `${host}${CW_PUBLIC_CHAT_PATH}`;
+    return `curl -sS -X POST "${url}" \\
+  -H "Authorization: Bearer mira_cw_YOUR_SECRET" \\
+  -H "Origin: https://YOUR_REGISTERED_DOMAIN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "messages": [
+      { "role": "system", "content": "Reply briefly in Vietnamese." },
+      { "role": "user", "content": "What is 2+2?" }
+    ],
+    "temperature": 0.3,
+    "maxTokens": 256
+  }'`;
+  }, [publicApiBase]);
+
+  const curlWebhookAliasExample = useMemo(() => {
+    const host = publicApiBase || "https://YOUR_HOST";
+    const url = `${host}${CW_PUBLIC_WEBHOOK_ALIAS_PATH}`;
+    return `curl -sS -X POST "${url}" \\
+  -H "Authorization: Bearer mira_cw_YOUR_SECRET" \\
+  -H "Origin: https://YOUR_REGISTERED_DOMAIN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "messages": [
+      { "role": "system", "content": "Reply briefly in Vietnamese." },
+      { "role": "user", "content": "What is 2+2?" }
+    ],
+    "temperature": 0.3,
+    "maxTokens": 256
+  }'`;
+  }, [publicApiBase]);
 
   const formatDate = (iso: string | null) => {
     if (!iso) return "-";
@@ -378,43 +443,183 @@ export default function WebhooksPage() {
             </button>
           </div>
           {guideOpen ? (
-            <div className="mt-3">
-              <p className="text-sm leading-relaxed text-zinc-600">
+            <div className="mt-3 space-y-4 text-sm text-zinc-700">
+              <p className="leading-relaxed text-zinc-600">
+                {tr(
+                  "webhooks.guideDocPushClarify",
+                  "This is not a “callback webhook” from Mira to the partner. The partner only POSTs to your Mira server. Two public paths share the same logic and body/response.",
+                )}
+              </p>
+              <p className="leading-relaxed text-zinc-600">
                 {tr("webhooks.guideIntro", "Give each partner one API key tied to their apex domain. They integrate from their own servers — not from this dashboard.")}
               </p>
-              <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-relaxed text-zinc-700">
-                <li>{tr("webhooks.guideBullet1", "Keep the Bearer secret on the partner backend only. Do not ship it to browsers or mobile clients.")}</li>
-                <li>
-                  {tr(
-                    "webhooks.guideBullet2",
-                    "Send HTTP POST with Content-Type application/json. Body includes messages: an array of { role, content } with role limited to system, user, or assistant (no tools / skill-calling in this API).",
-                  )}
-                </li>
-                <li>
-                  {tr(
-                    "webhooks.guideBullet3",
-                    "Headers: Authorization: Bearer <key>; Origin or Referer must use a host allowed for that key (registered domain, or subdomains if you enabled them). Server-to-server calls should set Origin or Referer to the partner site URL.",
-                  )}
-                </li>
-                <li>{tr("webhooks.guideBullet4", "Optional JSON fields: temperature, maxTokens, model (to pin a specific model instead of router default).")}</li>
-                <li>
-                  {tr(
-                    "webhooks.guideBullet5",
-                    "Success responses return model text, token usage, and routing metadata. For browser-side calls you must configure CORS on the API gateway; calling from the partner backend avoids that.",
-                  )}
-                </li>
-              </ul>
-              {thirdPartyChatUrl ? (
-                <div className="mt-4 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
-                  <p className="text-xs font-medium text-zinc-600">
-                    {tr("webhooks.guideExampleUrl", "Example chat URL (prepend your configured API host):")}
-                  </p>
-                  <code className="mt-1 block break-all font-mono text-xs text-zinc-800">{thirdPartyChatUrl}</code>
-                  <p className="mt-2 text-xs text-zinc-500">
-                    {tr("webhooks.guideUrlNote", "If your deployment mounts routes under another prefix (e.g. /api/v1), adjust the path to match your server.")}
-                  </p>
+
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">{tr("webhooks.guideDocS1Title", "1. Endpoints the third party uses")}</h3>
+                <p className="mt-1 text-zinc-600">{tr("webhooks.guideDocS1Intro", "")}</p>
+                <div className="mt-2 overflow-x-auto rounded-lg border border-zinc-200">
+                  <table className="w-full min-w-[480px] text-left text-xs">
+                    <thead className="bg-zinc-100 text-zinc-800">
+                      <tr>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocColKind", "Kind")}</th>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocColMethod", "Method")}</th>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocColPath", "Path (after base URL)")}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 bg-white">
+                      <tr>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocRowChatKind", "Chat API")}</td>
+                        <td className="px-2 py-2 font-mono">POST</td>
+                        <td className="px-2 py-2 font-mono text-xs">{CW_PUBLIC_CHAT_PATH}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocRowWebhookKind", "Webhook alias")}</td>
+                        <td className="px-2 py-2 font-mono">POST</td>
+                        <td className="px-2 py-2 font-mono text-xs">{CW_PUBLIC_WEBHOOK_ALIAS_PATH}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
-              ) : null}
+                <p className="mt-2 text-xs text-zinc-600">{tr("webhooks.guideDocBaseHint", "")}</p>
+                {fullChatUrl ? (
+                  <div className="mt-2 space-y-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2">
+                    <p className="text-xs font-medium text-zinc-600">{tr("webhooks.guideDocFullUrlsTitle", "Full URLs from your configured API host:")}</p>
+                    <code className="block break-all font-mono text-xs text-zinc-900">{fullChatUrl}</code>
+                    <code className="block break-all font-mono text-xs text-zinc-900">{fullWebhookAliasUrl}</code>
+                  </div>
+                ) : (
+                  <p className="mt-2 font-mono text-xs text-zinc-600">
+                    {tr("webhooks.guideDocUrlPlaceholder", "Set NEXT_PUBLIC_API_URL to see full URLs. Example:")}{" "}
+                    <span className="break-all">
+                      https://&lt;host&gt;{CW_PUBLIC_CHAT_PATH}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">{tr("webhooks.guideDocS2Title", "2. Before calling")}</h3>
+                <ul className="mt-2 list-disc space-y-1.5 pl-5 text-zinc-700">
+                  <li>{tr("webhooks.guideDocS2a", "")}</li>
+                  <li>{tr("webhooks.guideDocS2b", "")}</li>
+                  <li>{tr("webhooks.guideDocS2c", "")}</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">{tr("webhooks.guideDocS3Title", "3. Headers")}</h3>
+                <div className="mt-2 overflow-x-auto rounded-lg border border-zinc-200">
+                  <table className="w-full min-w-[400px] text-left text-xs">
+                    <thead className="bg-zinc-100 text-zinc-800">
+                      <tr>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocS3hHeader", "Header")}</th>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocS3hMeaning", "Meaning")}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 bg-white">
+                      <tr>
+                        <td className="px-2 py-2 font-mono">Authorization</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS3auth", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">Origin / Referer</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS3origin", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">Content-Type</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS3content", "")}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">{tr("webhooks.guideDocS4Title", "4. Body (JSON)")}</h3>
+                <div className="mt-2 overflow-x-auto rounded-lg border border-zinc-200">
+                  <table className="w-full min-w-[480px] text-left text-xs">
+                    <thead className="bg-zinc-100 text-zinc-800">
+                      <tr>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocS4field", "Field")}</th>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocS4req", "Required")}</th>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocS4desc", "Description")}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 bg-white">
+                      <tr>
+                        <td className="px-2 py-2 font-mono">messages</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocYes", "Yes")}</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS4messages", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">temperature</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocNo", "No")}</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS4temp", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">maxTokens</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocNo", "No")}</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS4max", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">model</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocNo", "No")}</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS4model", "")}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-zinc-600">{tr("webhooks.guideDocS4noTools", "")}</p>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">{tr("webhooks.guideDocS5Title", "5. curl example (equivalent paths)")}</h3>
+                <p className="mt-1 text-xs font-medium text-zinc-700">{tr("webhooks.guideDocS5PathA", "Path: chat API")}</p>
+                <pre className="mt-1 max-h-64 overflow-auto rounded-lg border border-zinc-200 bg-zinc-950 p-3 text-xs text-zinc-100">{curlChatExample}</pre>
+                <p className="mt-3 text-xs font-medium text-zinc-700">{tr("webhooks.guideDocS5PathB", "Path: webhook alias (same request)")}</p>
+                <pre className="mt-1 max-h-64 overflow-auto rounded-lg border border-zinc-200 bg-zinc-950 p-3 text-xs text-zinc-100">{curlWebhookAliasExample}</pre>
+                <p className="mt-2 text-xs text-zinc-600">{tr("webhooks.guideDocS5alt", "")}</p>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">{tr("webhooks.guideDocS6Title", "6. Success response (HTTP 200)")}</h3>
+                <p className="mt-1 text-xs text-zinc-600">{tr("webhooks.guideDocS6Note", "")}</p>
+                <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-zinc-200 bg-zinc-950 p-3 text-xs text-zinc-100">{CW_SUCCESS_RESPONSE_EXAMPLE}</pre>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">{tr("webhooks.guideDocS7Title", "7. Common errors")}</h3>
+                <div className="mt-2 overflow-x-auto rounded-lg border border-zinc-200">
+                  <table className="w-full min-w-[400px] text-left text-xs">
+                    <thead className="bg-zinc-100 text-zinc-800">
+                      <tr>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocS7hHttp", "HTTP")}</th>
+                        <th className="px-2 py-2 font-semibold">{tr("webhooks.guideDocS7hMeaning", "Meaning")}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 bg-white">
+                      <tr>
+                        <td className="px-2 py-2 font-mono">400</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS7r400", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">401</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS7r401", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">403</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS7r403", "")}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-2 py-2 font-mono">429</td>
+                        <td className="px-2 py-2">{tr("webhooks.guideDocS7r429", "")}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs font-medium text-zinc-600">{tr("webhooks.guideDocErr400Title", "400 example (Nest):")}</p>
+                <pre className="mt-1 max-h-40 overflow-auto rounded-lg border border-zinc-200 bg-zinc-950 p-3 text-xs text-zinc-100">{CW_ERR_400_EXAMPLE}</pre>
+              </div>
             </div>
           ) : null}
         </div>
