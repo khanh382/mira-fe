@@ -47,7 +47,7 @@ const CW_ERR_400_EXAMPLE = `{
 }`;
 
 function PageChrome({ children }: { children: React.ReactNode }) {
-  return <div className="w-full space-y-4 p-4">{children}</div>;
+  return <div className="w-full min-w-0 space-y-3 p-2 sm:space-y-4 sm:p-4">{children}</div>;
 }
 
 export default function WebhooksPage() {
@@ -761,7 +761,7 @@ export default function WebhooksPage() {
       </section>
 
       {showCreate && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2 sm:p-4">
           <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[rgb(173,8,8)]">{tr("webhooks.create", "Add API key")}</h3>
@@ -804,7 +804,7 @@ export default function WebhooksPage() {
       )}
 
       {revealedKey && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 sm:p-4">
           <div className="w-full max-w-xl rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-lg">
             <h3 className="text-lg font-semibold text-amber-900">{revealedKey.title}</h3>
             <p className="mt-2 text-sm text-amber-950">{tr("webhooks.secretWarn", "Copy this Bearer token now. It cannot be retrieved later.")}</p>
@@ -832,7 +832,7 @@ export default function WebhooksPage() {
       )}
 
       {configureRow && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2 sm:p-4">
           <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[rgb(173,8,8)]">
@@ -882,7 +882,7 @@ export default function WebhooksPage() {
       )}
 
       {usageFor && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2 sm:p-4">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-red-200 bg-white p-4 shadow-lg">
             <div className="mb-3 flex items-start justify-between gap-2">
               <div>

@@ -16,6 +16,12 @@ body {
   font-size: 18px;
 }
 
+@media (max-width: 640px) {
+  body {
+    font-size: 16px;
+  }
+}
+
 body.theme-dark {
   background: #09090b;
   color: #e4e4e7;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import { useLang } from "@/lang";
 import {
@@ -380,7 +380,11 @@ export default function WorkflowsPage() {
   const [saving, setSaving] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
-  const [canvasFullscreen, setCanvasFullscreen] = useState(false);
+  /** True when this page uses the real Fullscreen API on the canvas stage. */
+  const [canvasApiFullscreen, setCanvasApiFullscreen] = useState(false);
+  /** Fallback: hide side panels + expand in-page if requestFullscreen is unavailable or fails. */
+  const [canvasLayoutExpanded, setCanvasLayoutExpanded] = useState(false);
+  const canvasStageRef = useRef<HTMLDivElement | null>(null);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toolOptions, setToolOptions] = useState<ToolOption[]>([]);
@@ -1596,22 +1600,96 @@ export default function WorkflowsPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedWorkflow, selectedEdgeId]);
 
+  const isCanvasStageElementFullscreen = (el: HTMLDivElement | null) => {
+    if (!el) return false;
+    return (
+      document.fullscreenElement === el || (document as unknown as { webkitFullscreenElement?: Element | null }).webkitFullscreenElement === el
+    );
+  };
+
+  const exitCanvasStageFullscreen = useCallback(async () => {
+    setCanvasLayoutExpanded(false);
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      const doc = document as unknown as { webkitExitFullscreen?: () => Promise<void> };
+      if (doc.webkitExitFullscreen) {
+        await doc.webkitExitFullscreen();
+      }
+    } catch {
+      /* user may have already left fullscreen */
+    }
+  }, []);
+
+  const requestCanvasStageFullscreen = useCallback(async () => {
+    const el = canvasStageRef.current;
+    if (!el) return;
+    setCanvasLayoutExpanded(false);
+    try {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+        return;
+      }
+      const wk = el as unknown as { webkitRequestFullscreen?: () => Promise<void> };
+      if (wk.webkitRequestFullscreen) {
+        await wk.webkitRequestFullscreen();
+        return;
+      }
+    } catch {
+      /* fall through to layout */
+    }
+    setCanvasLayoutExpanded(true);
+  }, []);
+
   useEffect(() => {
-    if (!canvasFullscreen) return;
+    const sync = () => {
+      setCanvasApiFullscreen(isCanvasStageElementFullscreen(canvasStageRef.current));
+    };
+    sync();
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!canvasLayoutExpanded || canvasApiFullscreen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        setCanvasFullscreen(false);
+        setCanvasLayoutExpanded(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canvasFullscreen]);
+  }, [canvasLayoutExpanded, canvasApiFullscreen]);
+
+  useEffect(() => {
+    if (!canvasApiFullscreen) return;
+    const nudge = () => {
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+    };
+    window.addEventListener("orientationchange", nudge);
+    window.addEventListener("resize", nudge);
+    return () => {
+      window.removeEventListener("orientationchange", nudge);
+      window.removeEventListener("resize", nudge);
+    };
+  }, [canvasApiFullscreen]);
+
+  const hideWorkflowSidePanels = canvasApiFullscreen || canvasLayoutExpanded;
+  const toolbarOnlyExitLayout = canvasLayoutExpanded && !canvasApiFullscreen;
 
   return (
-    <div className="relative flex-1 flex flex-col h-full w-full min-h-[600px] overflow-hidden bg-slate-50">
-      <div className="relative h-full w-full">
-        <section className={`pointer-events-auto absolute bottom-4 left-4 top-4 z-20 flex w-[320px] flex-col overflow-y-auto rounded-3xl border border-white/60 bg-white/70 p-5 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 ${canvasFullscreen ? "hidden" : ""}`}>
+    <div className="relative flex h-full w-full min-h-0 flex-1 flex-col overflow-hidden bg-slate-50 min-[700px]:min-h-[600px]">
+      <div className="relative h-full w-full min-h-0">
+        <section className={`pointer-events-auto absolute left-2 right-2 top-2 z-20 flex max-h-[min(48vh,420px)] w-auto flex-col overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:p-4 md:bottom-4 md:left-4 md:right-auto md:top-4 md:max-h-none md:w-[320px] ${hideWorkflowSidePanels ? "hidden" : ""}`}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">{tr("workflowsUi.workflows", "Workflows")}</h2>
             <button
@@ -1790,25 +1868,57 @@ export default function WorkflowsPage() {
           )}
         </section>
 
-        <section className="absolute inset-0 z-10">
-          <div className="pointer-events-auto absolute left-1/2 top-4 z-30 flex -translate-x-1/2 items-center justify-between gap-6 rounded-2xl border border-white/60 bg-white/70 px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.06)] backdrop-blur-xl">
-            <div className="flex items-center gap-2">
+        <div
+          ref={canvasStageRef}
+          className="absolute inset-0 z-10 flex min-h-0 w-full min-w-0 flex-col overflow-hidden bg-slate-50"
+        >
+          {canvasApiFullscreen && (
+            <div
+              className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex justify-end p-3"
+              style={{
+                paddingTop: "max(0.75rem, env(safe-area-inset-top, 0px))",
+                paddingRight: "max(0.75rem, env(safe-area-inset-right, 0px))",
+              }}
+            >
               <button
                 type="button"
-                onClick={() => setCanvasFullscreen((v) => !v)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-300 bg-white text-red-700 hover:bg-red-50"
+                onClick={() => void exitCanvasStageFullscreen()}
+                className="pointer-events-auto inline-flex h-11 min-h-[44px] min-w-[44px] w-11 items-center justify-center rounded-2xl border-2 border-red-500/30 bg-white/95 text-red-700 shadow-lg ring-1 ring-zinc-200/80 hover:bg-red-50"
+                aria-label={tr("workflowsUi.exitCanvasFullscreen", "Exit fullscreen canvas")}
+                title={tr("workflowsUi.shrinkCanvas", "Shrink canvas")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+                  <path
+                    d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {!canvasApiFullscreen && (
+            <div className="pointer-events-auto absolute left-1/2 top-4 z-30 flex max-w-[min(100%,calc(100vw-1.5rem))] -translate-x-1/2 items-center justify-between gap-2 rounded-2xl border border-white/60 bg-white/70 px-2 py-2 shadow-[0_8px_30px_rgb(0,0,0,0.06)] backdrop-blur-xl min-[500px]:gap-6 min-[500px]:px-4 min-[500px]:py-3 sm:px-3">
+            <div className="flex min-w-0 items-center gap-1 min-[500px]:gap-2 sm:gap-2">
+              <button
+                type="button"
+                onClick={() => void (toolbarOnlyExitLayout ? exitCanvasStageFullscreen() : requestCanvasStageFullscreen())}
+                className="inline-flex h-8 w-8 min-h-10 min-w-10 shrink-0 items-center justify-center rounded border border-red-300 bg-white text-red-700 hover:bg-red-50"
                 aria-label={
-                  canvasFullscreen
-                    ? tr("workflowsUi.exitFullscreen", "Exit fullscreen (ESC)")
+                  toolbarOnlyExitLayout
+                    ? tr("workflowsUi.shrinkCanvas", "Shrink canvas")
                     : tr("workflowsUi.enterFullscreen", "Expand canvas")
                 }
                 title={
-                  canvasFullscreen
-                    ? tr("workflowsUi.exitFullscreen", "Exit fullscreen (ESC)")
+                  toolbarOnlyExitLayout
+                    ? tr("workflowsUi.shrinkCanvas", "Shrink canvas")
                     : tr("workflowsUi.enterFullscreen", "Expand canvas")
                 }
               >
-                {canvasFullscreen ? (
+                {toolbarOnlyExitLayout ? (
                   <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
                     <path
                       d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"
@@ -1982,7 +2092,9 @@ export default function WorkflowsPage() {
               )}
             </div>
           </div>
+          )}
 
+          <div className="relative min-h-0 w-full flex-1">
           <div
             id="canvas-wrapper"
             className={`pointer-events-auto absolute inset-0 z-0 h-full w-full overflow-hidden touch-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
@@ -2285,9 +2397,10 @@ export default function WorkflowsPage() {
             })}
             </div>
           </div>
-        </section>
+          </div>
+        </div>
 
-        <section className={`pointer-events-auto absolute bottom-4 right-4 top-4 z-20 flex w-[360px] flex-col space-y-4 overflow-y-auto rounded-3xl border border-white/60 bg-white/70 p-5 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 ${canvasFullscreen ? "hidden" : ""}`}>
+        <section className={`pointer-events-auto absolute bottom-2 left-2 right-2 z-20 flex max-h-[min(50vh,480px)] w-auto flex-col space-y-3 overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:space-y-4 sm:p-4 md:bottom-4 md:left-auto md:right-4 md:top-4 md:max-h-none md:w-[360px] md:rounded-3xl md:p-5 ${hideWorkflowSidePanels ? "hidden" : ""}`}>
           <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">{tr("workflowsUi.inspectorRun", "Inspector + Run")}</h2>
 
           {selectedWorkflow && selectedNode && (

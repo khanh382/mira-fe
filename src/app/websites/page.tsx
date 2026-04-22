@@ -218,7 +218,7 @@ export default function WebsitesPage() {
   const modalOpen = showCreate || isEditing;
 
   return (
-    <div className="w-full space-y-4 p-4">
+    <div className="w-full min-w-0 space-y-3 p-2 sm:space-y-4 sm:p-4">
       <div className="rounded-xl border border-red-200 bg-white p-4">
         <h1 className="text-2xl font-semibold text-[rgb(173,8,8)]">
           {tr("websites.title", "My Websites")}
@@ -355,8 +355,8 @@ export default function WebsitesPage() {
       </section>
 
       {modalOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl rounded-xl border border-red-200 bg-white p-4">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2 sm:p-4">
+          <div className="w-full max-w-2xl rounded-xl border border-red-200 bg-white p-3 sm:p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[rgb(173,8,8)]">
                 {isEditing

@@ -236,20 +236,20 @@ export default function ChatPage() {
 
 
   return (
-    <div className="grid h-[calc(100vh-3rem)] gap-4 lg:grid-cols-[1fr_320px]">
-      <section className="flex h-full min-h-0 flex-col rounded-2xl border border-red-200 bg-white">
-        <header className="flex items-center justify-between border-b border-red-200 px-4 py-3">
-          <div>
-            <h1 className="text-xl font-semibold text-[rgb(173,8,8)]">{tr("chat.title", "Agent Chat")}</h1>
-            <p className="text-xs text-zinc-500">
+    <div className="flex w-full min-w-0 flex-1 min-h-0 flex-col gap-3 sm:gap-4 lg:grid lg:grid-cols-[1fr_320px]">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-red-200 bg-white">
+        <header className="flex flex-col gap-3 border-b border-red-200 px-2 py-3 min-[400px]:flex-row min-[400px]:items-center min-[400px]:justify-between min-[400px]:gap-2 sm:px-4">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-[rgb(173,8,8)] sm:text-xl">{tr("chat.title", "Agent Chat")}</h1>
+            <p className="break-all text-xs text-zinc-500">
               {tr("chat.thread", "Thread")}: {threadId || tr("chat.notReady", "resolving...")}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
             <select
               value={threadId || ""}
               onChange={(e) => void onChangeThread(e.target.value)}
-              className="max-w-[260px] rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-zinc-700 outline-none focus:border-red-300 focus:ring-0"
+              className="min-w-0 max-w-full flex-1 min-[400px]:max-w-[260px] min-[400px]:flex-none rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-zinc-700 outline-none focus:border-red-300 focus:ring-0"
             >
               {!threadId && <option value="">{tr("chat.notReady", "resolving...")}</option>}
               {threadOptions.map((id) => (
@@ -268,7 +268,7 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <div ref={messagesContainerRef} className="flex-1 min-h-0 space-y-3 overflow-auto p-4">
+        <div ref={messagesContainerRef} className="flex-1 min-h-0 space-y-3 overflow-auto p-2 sm:p-4">
           {loadingHistory && (
             <p className="text-sm text-zinc-500">{tr("chat.loading", "Loading conversation...")}</p>
           )}
@@ -287,7 +287,7 @@ export default function ChatPage() {
           {messages.map((msg) => (
             <div
               key={msg.id}
-              className={`max-w-[46%] rounded-xl px-3 py-2 text-sm ${
+              className={`max-w-[min(92%,24rem)] rounded-xl px-3 py-2 text-sm ${
                 msg.role === "user"
                   ? "ml-auto bg-[rgb(173,8,8)] text-white"
                   : "border border-red-200 bg-red-50 text-zinc-800"
@@ -304,7 +304,7 @@ export default function ChatPage() {
           ))}
 
           {sending && showTyping && (
-            <div className="max-w-[46%] rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-zinc-800">
+            <div className="max-w-[min(92%,24rem)] rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-zinc-800">
               <div className="mb-1 flex items-center justify-between gap-3 text-[11px] opacity-70">
                 <span className="uppercase tracking-wide">Agent</span>
                 <span>{tr("chat.typing", "typing...")}</span>
@@ -318,7 +318,7 @@ export default function ChatPage() {
           )}
         </div>
 
-        <form onSubmit={onSend} className="border-t border-red-200 p-4">
+        <form onSubmit={onSend} className="shrink-0 border-t border-red-200 p-2 sm:p-4">
           {error && (
             <p className="mb-3 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">
               {error}
@@ -365,7 +365,7 @@ export default function ChatPage() {
         </form>
       </section>
 
-      <aside className="space-y-4">
+      <aside className="min-w-0 space-y-3 sm:space-y-4 lg:min-h-0 lg:overflow-y-auto">
         <section className="rounded-2xl border border-red-200/60 bg-white/70 p-5 shadow-sm backdrop-blur-xl">
           <div className="mb-5 flex items-center justify-between">
             <h2 className="text-sm font-bold text-[rgb(173,8,8)]">{tr("chat.status", "Agent Information")}</h2>
