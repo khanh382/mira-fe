@@ -1870,10 +1870,9 @@ export default function WorkflowsPage() {
           {loadingWorkflows && <p className="mb-2 text-xs text-zinc-600">{tr("workflowsUi.loading", "Loading workflows...")}</p>}
           {loadError && <p className="mb-2 text-xs text-red-700">{loadError}</p>}
 
-          <div className="mb-3 max-h-60 space-y-2 overflow-auto">
-            {workflows.map((wf) => {
-              const active = wf.id === selectedWorkflowId;
-              return (
+          {!selectedWorkflow ? (
+            <div className="mb-3 max-h-60 space-y-2 overflow-auto">
+              {workflows.map((wf) => (
                 <button
                   key={wf.id}
                   type="button"
@@ -1884,27 +1883,43 @@ export default function WorkflowsPage() {
                     setConnectFromNodeId(null);
                     setMobileTab("canvas");
                   }}
-                  className={`min-w-0 w-full rounded-lg border px-3 py-1.5 text-left ${
-                    active
-                      ? "border-red-600 bg-red-100 text-red-800"
-                      : "border-red-200 bg-white text-zinc-700 hover:bg-red-50"
-                  }`}
+                  className="min-w-0 w-full rounded-lg border border-red-200 bg-white px-3 py-1.5 text-left text-zinc-700 hover:bg-red-50"
                 >
                   <p className="truncate text-xs font-semibold leading-tight" title={wf.name}>
                     {wf.name}
                   </p>
-                  <p
-                    className={`mt-0.5 truncate text-[11px] leading-tight ${
-                      active ? "text-red-900/70" : "text-zinc-600"
-                    }`}
-                    title={`v${wf.version} - ${wf.status}`}
-                  >
+                  <p className="mt-0.5 truncate text-[11px] leading-tight text-zinc-600" title={`v${wf.version} - ${wf.status}`}>
                     v{wf.version} - {wf.status}
                   </p>
                 </button>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mb-3">
+              <button
+                type="button"
+                onClick={() => clearWorkflowSelection()}
+                className="mb-2 w-full text-left text-[11px] font-medium text-red-700 hover:underline"
+              >
+                {tr("workflowsUi.backToList", "← All workflows")}
+              </button>
+              <div
+                className="rounded-lg border border-red-600 bg-red-100 px-3 py-2"
+                title={selectedWorkflow.id}
+                aria-current="true"
+              >
+                <p className="truncate text-xs font-semibold leading-tight text-red-800" title={selectedWorkflow.name}>
+                  {selectedWorkflow.name}
+                </p>
+                <p
+                  className="mt-0.5 truncate text-[11px] text-red-900/70"
+                  title={`v${selectedWorkflow.version} - ${selectedWorkflow.status}`}
+                >
+                  v{selectedWorkflow.version} - {selectedWorkflow.status}
+                </p>
+              </div>
+            </div>
+          )}
 
           {selectedWorkflow && (
             <div className="space-y-2 border-t border-red-200 pt-3">
