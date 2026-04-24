@@ -2312,9 +2312,6 @@ export default function WorkflowsPage() {
             onPointerDown={(e) => {
               const target = e.target as HTMLElement;
               if (target.id === "canvas-wrapper" || target.id === "canvas-layer" || target.tagName.toLowerCase() === "svg") {
-                if (selectedWorkflowId) {
-                  clearWorkflowSelection();
-                }
                 setIsPanning(true);
                 setPanStartUserPos({ x: e.clientX, y: e.clientY });
                 setPanStartOffset(panOffset);
