@@ -11,6 +11,8 @@ import {
   getWorkflowGraph,
   getWorkflowRunDetail,
   getWorkflowToolOptions,
+  importWorkflowFromBackup,
+  downloadWorkflowBackup,
   listNodeRuns,
   listWorkflowRuns,
   listWorkflows as listWorkflowsApi,
@@ -348,6 +350,14 @@ const getSmartEdgePoints = (
   return { x1, y1, c1x, c1y, x2, y2, c2x, c2y };
 };
 
+const isValidWorkflowBackupJson = (value: unknown): value is Record<string, unknown> => {
+  if (!value || typeof value !== "object") return false;
+  const o = value as Record<string, unknown>;
+  if (!o.workflow || typeof o.workflow !== "object") return false;
+  if (!Array.isArray(o.nodes) || !Array.isArray(o.edges)) return false;
+  return true;
+};
+
 export default function WorkflowsPage() {
   const { t } = useLang();
   const tr = (key: string, fallback: string) => {
@@ -380,6 +390,9 @@ export default function WorkflowsPage() {
   const [saving, setSaving] = useState(false);
   const [savingMeta, setSavingMeta] = useState(false);
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
+  const [importingClone, setImportingClone] = useState(false);
+  const [downloadingBackup, setDownloadingBackup] = useState(false);
+  const cloneBackupFileInputRef = useRef<HTMLInputElement | null>(null);
   /** True when this page uses the real Fullscreen API on the canvas stage. */
   const [canvasApiFullscreen, setCanvasApiFullscreen] = useState(false);
   /** Fallback: hide side panels + expand in-page if requestFullscreen is unavailable or fails. */
@@ -1004,6 +1017,102 @@ export default function WorkflowsPage() {
       setDirty(false);
     } catch (_error) {
       setLoadError(tr("workflowsUi.createError", "Could not create workflow."));
+    }
+  };
+
+  const onCloneBackupFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLoadError(null);
+    setImportingClone(true);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text) as unknown;
+      } catch {
+        setLoadError(tr("workflowsUi.cloneJsonParseError", "The file is not valid JSON."));
+        return;
+      }
+      if (!isValidWorkflowBackupJson(parsed)) {
+        setLoadError(
+          tr("workflowsUi.cloneBackupInvalid", "The file is not a valid workflow backup (expected workflow, nodes, edges)."),
+        );
+        return;
+      }
+      const res = await importWorkflowFromBackup({ backup: parsed, restoreStatus: false });
+      const data = (res?.data || {}) as Record<string, unknown>;
+      const workflowRaw = (data.workflow || {}) as Record<string, unknown>;
+      const nodesRaw = Array.isArray(data.nodes) ? data.nodes : [];
+      const edgesRaw = Array.isArray(data.edges) ? data.edges : [];
+      const newId = String(workflowRaw.id ?? "");
+      if (!newId) {
+        setLoadError(tr("workflowsUi.cloneImportError", "Import succeeded but the response had no workflow id."));
+        return;
+      }
+      const next = normalizeWorkflow({
+        ...workflowRaw,
+        id: newId,
+        nodes: nodesRaw,
+        edges: edgesRaw,
+      });
+      setWorkflows((prev) => {
+        const rest = prev.filter((w) => w.id !== next.id);
+        return [next, ...rest];
+      });
+      setMetaSnapshotById((prev) => ({
+        ...prev,
+        [next.id]: {
+          name: next.name,
+          code: next.code,
+          description: next.description ?? null,
+        },
+      }));
+      setSelectedWorkflowId(next.id);
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      setConnectFromNodeId(null);
+      setPendingConnect(null);
+      setDirty(false);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } }; message?: string };
+      setLoadError(
+        e?.response?.data?.message ||
+          e?.message ||
+          tr("workflowsUi.cloneImportError", "Could not import workflow from this file."),
+      );
+    } finally {
+      setImportingClone(false);
+    }
+  };
+
+  const onDownloadSelectedWorkflowBackup = async () => {
+    if (!selectedWorkflowId) return;
+    setLoadError(null);
+    setDownloadingBackup(true);
+    try {
+      await downloadWorkflowBackup(selectedWorkflowId);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: unknown }; message?: string };
+      let message = tr("workflowsUi.backupError", "Could not download backup file.");
+      const d = e?.response?.data;
+      if (d instanceof Blob) {
+        try {
+          const text = await d.text();
+          const parsed = JSON.parse(text) as { message?: string };
+          if (typeof parsed?.message === "string" && parsed.message) message = parsed.message;
+        } catch {
+          // keep default
+        }
+      } else if (d && typeof d === "object" && "message" in d && typeof (d as { message: string }).message === "string") {
+        message = (d as { message: string }).message;
+      } else if (e?.message) {
+        message = e.message;
+      }
+      setLoadError(message);
+    } finally {
+      setDownloadingBackup(false);
     }
   };
 
@@ -1692,13 +1801,32 @@ export default function WorkflowsPage() {
         <section className={`pointer-events-auto absolute left-2 right-2 top-2 z-20 flex max-h-[min(48vh,420px)] w-auto flex-col overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:p-4 md:bottom-4 md:left-4 md:right-auto md:top-4 md:max-h-none md:w-[320px] ${hideWorkflowSidePanels ? "hidden" : ""}`}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">{tr("workflowsUi.workflows", "Workflows")}</h2>
-            <button
-              type="button"
-              onClick={onCreateWorkflow}
-              className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200"
-            >
-              {tr("workflowsUi.new", "New")}
-            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              <input
+                ref={cloneBackupFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={onCloneBackupFileChange}
+              />
+              <button
+                type="button"
+                disabled={importingClone}
+                onClick={() => cloneBackupFileInputRef.current?.click()}
+                className="rounded border border-red-200 bg-white px-2 py-1 text-xs text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                title={tr("workflowsUi.cloneHint", "Create a copy from a JSON backup (export file)")}
+                aria-label={tr("workflowsUi.clone", "Clone")}
+              >
+                {importingClone ? tr("workflowsUi.cloning", "Cloning...") : tr("workflowsUi.clone", "Clone")}
+              </button>
+              <button
+                type="button"
+                onClick={onCreateWorkflow}
+                className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200"
+              >
+                {tr("workflowsUi.new", "New")}
+              </button>
+            </div>
           </div>
           {loadingWorkflows && <p className="mb-2 text-xs text-zinc-600">{tr("workflowsUi.loading", "Loading workflows...")}</p>}
           {loadError && <p className="mb-2 text-xs text-red-700">{loadError}</p>}
@@ -2401,7 +2529,25 @@ export default function WorkflowsPage() {
         </div>
 
         <section className={`pointer-events-auto absolute bottom-2 left-2 right-2 z-20 flex max-h-[min(50vh,480px)] w-auto flex-col space-y-3 overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:space-y-4 sm:p-4 md:bottom-4 md:left-auto md:right-4 md:top-4 md:max-h-none md:w-[360px] md:rounded-3xl md:p-5 ${hideWorkflowSidePanels ? "hidden" : ""}`}>
-          <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">{tr("workflowsUi.inspectorRun", "Inspector + Run")}</h2>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <h2 className="min-w-0 text-sm font-semibold text-[rgb(173,8,8)]">
+              {tr("workflowsUi.inspectorRun", "Inspector + Run")}
+            </h2>
+            {selectedWorkflow ? (
+              <button
+                type="button"
+                disabled={loadingWorkflows || downloadingBackup}
+                onClick={() => {
+                  void onDownloadSelectedWorkflowBackup();
+                }}
+                className="shrink-0 rounded border border-red-200 bg-white px-2 py-1 text-xs text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                title={tr("workflowsUi.backupHint", "Download JSON backup of the selected workflow")}
+                aria-label={tr("workflowsUi.backup", "Backup")}
+              >
+                {downloadingBackup ? tr("workflowsUi.backingUp", "Downloading...") : tr("workflowsUi.backup", "Backup")}
+              </button>
+            ) : null}
+          </div>
 
           {selectedWorkflow && selectedNode && (
             <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-2">

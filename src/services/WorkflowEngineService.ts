@@ -110,6 +110,33 @@ export type ToolOptionGroup = {
   tools: ToolOptionItem[];
 };
 
+export type ImportWorkflowFromBackupPayload = {
+  backup: Record<string, unknown>;
+  code?: string;
+  name?: string;
+  restoreStatus?: boolean;
+};
+
+export const importWorkflowFromBackup = async (payload: ImportWorkflowFromBackupPayload) => {
+  const response = await axiosClient.post<ApiResponse<unknown>>("/agent/workflows/import", payload);
+  return response.data;
+};
+
+/** GET …/export — file JSON, filename từ header Content-Disposition. */
+export const downloadWorkflowBackup = async (workflowId: string) => {
+  const response = await axiosClient.get<Blob>(`/agent/workflows/${workflowId}/export`, {
+    responseType: "blob",
+  });
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
 export const listWorkflows = async () => {
   const response = await axiosClient.get<ApiResponse<unknown>>("/agent/workflows");
   return response.data;

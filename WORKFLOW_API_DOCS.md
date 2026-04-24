@@ -379,6 +379,40 @@ Tra ve:
 - `nodes`
 - `edges`
 
+### 6.1 Xuat file JSON backup (toan bo graph + canvas + prompt/command)
+
+`GET /agent/workflows/:workflowId/export`
+
+- Response: file JSON (`Content-Type: application/json; charset=utf-8`, `Content-Disposition: attachment`).
+- Ten file gom `workflow-<code>-backup.json` (code duoc lam sach ky tu khong hop le).
+- Noi dung co `schemaVersion: 1`, `exportedAt`, `workflow` (code, name, description, status, inputPayload, entryNodeId), `nodes` (gom `id` node cu — dung lam khoa remap khi import), `edges` (fromNodeId / toNodeId theo id node trong file).
+
+FE nut **Tai ban sao**: `window.open` / `fetch` + blob + `<a download>` voi URL co JWT (hoac fetch kem header Authorization roi tao object URL).
+
+### 6.2 Nhap / chay lai tu file backup (workflow + node id moi)
+
+`POST /agent/workflows/import`
+
+Body:
+
+```json
+{
+  "backup": { "...": "noi dung file export hoac object parse san" },
+  "code": "optional_ma_moi_unique",
+  "name": "Optional ten hien thi",
+  "restoreStatus": false
+}
+```
+
+- `backup`: bat buoc — object JSON dung format export (`schemaVersion`, `workflow`, `nodes`, `edges`).
+- `code` (optional): neu bo trong, backend sinh `<code_goc>_import_<timestamp>` va tu them hau to neu trung unique.
+- `name` (optional): mac dinh `"<ten_goc> (copy)"`.
+- `restoreStatus` (optional, default false): neu `true`, sau khi luu graph se dat lai `status` giong file (vd `active`) — se chay validation giong luc activate; neu false, workflow moi luon bat dau o `draft`.
+
+Ket qua: giong response bulk save graph: `workflow`, `nodes`, `edges`, `nodeKeyMap` (map **id node trong file** -> **id node moi** trong DB). Prompt template, `command_code`, `condition_expr` duoc rewrite tu id cu sang id moi (va clientKey/UUID trong `{nodes....}`) trong cung transaction `saveGraph`.
+
+Neu import loi sau khi da tao row workflow, backend xoa workflow do (cleanup best-effort).
+
 ## 7) Xem chi tiet run
 
 `GET /agent/workflows/runs/:runId`
