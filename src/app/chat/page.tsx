@@ -32,6 +32,7 @@ export default function ChatPage() {
   const typingDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const [showTyping, setShowTyping] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const tr = (key: string, fallback: string) => {
     const value = t(key);
@@ -126,6 +127,24 @@ export default function ChatPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!infoOpen) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setInfoOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [infoOpen]);
+
+  useEffect(() => {
+    if (!infoOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [infoOpen]);
 
   const onSend = async (e: FormEvent) => {
     e.preventDefault();
@@ -235,21 +254,113 @@ export default function ChatPage() {
   }, [skillsData]);
 
 
+  const infoSections = (
+    <>
+      <section className="rounded-2xl border border-red-200/60 bg-white/70 p-5 shadow-sm backdrop-blur-xl">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-sm font-bold text-[rgb(173,8,8)]">{tr("chat.status", "Agent Information")}</h2>
+          <div className="flex items-center gap-1.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span>
+            {statusData?.status === "ok" ? "Online" : "Active"}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 text-xs text-zinc-600">
+          <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
+            <span className="font-medium text-zinc-500">Cốt lõi</span>
+            <span className="font-semibold text-zinc-800">{statusData?.name || "Mira Multi-Agent"}</span>
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
+            <span className="font-medium text-zinc-500">Phiên bản</span>
+            <span className="font-semibold text-zinc-800">{statusData?.version || "1.0.0"}</span>
+          </div>
+          <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
+            <span className="font-medium text-zinc-500">Bảo mật</span>
+            <span className="font-semibold text-zinc-800">{statusData?.auth === "required" ? "Đã xác thực" : "Chế độ mở"}</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="flex min-h-0 flex-col rounded-2xl border border-red-200/60 bg-white/70 p-5 shadow-sm backdrop-blur-xl">
+        <div className="mb-4 flex items-center gap-2">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-[rgb(173,8,8)]"
+          >
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+          </svg>
+          <h2 className="text-sm font-bold text-[rgb(173,8,8)]">{tr("chat.skills", "Công cụ tích hợp")}</h2>
+        </div>
+
+        <div className="flex flex-wrap gap-2 overflow-y-auto">
+          {activeSkills.length > 0 ? (
+            activeSkills.map((skill: any, idx: number) => {
+              const name = typeof skill === "string" ? skill : skill.name || skill.id || "Skill";
+              const code = typeof skill === "object" && skill.code ? skill.code : name;
+              const desc = typeof skill === "object" && skill.description ? skill.description : undefined;
+              return (
+                <span
+                  key={idx}
+                  draggable
+                  title={desc}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/plain", `/${code} `);
+                  }}
+                  className="inline-flex cursor-grab active:cursor-grabbing items-center rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 shadow-sm transition-colors hover:bg-red-50"
+                >
+                  {name}
+                </span>
+              );
+            })
+          ) : (
+            <p className="w-full py-4 text-center text-xs italic text-zinc-400">
+              {tr("chat.skillsEmpty", "Không có công cụ nào khả dụng.")}
+            </p>
+          )}
+        </div>
+      </section>
+    </>
+  );
+
   return (
     <div className="flex w-full min-w-0 flex-1 min-h-0 flex-col gap-3 sm:gap-4 lg:grid lg:grid-cols-[1fr_320px]">
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-red-200 bg-white">
-        <header className="flex flex-col gap-3 border-b border-red-200 px-2 py-3 min-[400px]:flex-row min-[400px]:items-center min-[400px]:justify-between min-[400px]:gap-2 sm:px-4">
-          <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-[rgb(173,8,8)] sm:text-xl">{tr("chat.title", "Agent Chat")}</h1>
-            <p className="break-all text-xs text-zinc-500">
-              {tr("chat.thread", "Thread")}: {threadId || tr("chat.notReady", "resolving...")}
-            </p>
+        <header className="flex flex-col gap-2 border-b border-red-200 px-2 py-2 sm:gap-3 sm:px-4 sm:py-3 min-[640px]:flex-row min-[640px]:items-center min-[640px]:justify-between">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg font-semibold text-[rgb(173,8,8)] sm:text-xl">{tr("chat.title", "Agent Chat")}</h1>
+              <p className="truncate text-[11px] text-zinc-500 sm:text-xs" title={threadId || tr("chat.notReady", "resolving...")}>
+                {tr("chat.thread", "Thread")}: {threadId || tr("chat.notReady", "resolving...")}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInfoOpen(true)}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 lg:hidden"
+              aria-label={tr("chat.openInfo", "Open agent info")}
+              title={tr("chat.openInfo", "Open agent info")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+                <path d="M12 10.5v5.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <circle cx="12" cy="8" r="0.9" fill="currentColor" />
+              </svg>
+              <span>{tr("chat.info", "Info")}</span>
+            </button>
           </div>
-          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
+          <div className="flex min-w-0 items-center gap-2">
             <select
               value={threadId || ""}
               onChange={(e) => void onChangeThread(e.target.value)}
-              className="min-w-0 max-w-full flex-1 min-[400px]:max-w-[260px] min-[400px]:flex-none rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-zinc-700 outline-none focus:border-red-300 focus:ring-0"
+              className="min-w-0 max-w-full flex-1 rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-zinc-700 outline-none focus:border-red-300 focus:ring-0 min-[640px]:max-w-[260px] min-[640px]:flex-none"
             >
               {!threadId && <option value="">{tr("chat.notReady", "resolving...")}</option>}
               {threadOptions.map((id) => (
@@ -261,9 +372,20 @@ export default function ChatPage() {
             <button
               type="button"
               onClick={onResetThread}
-              className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700 hover:bg-red-200"
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-red-100 px-2.5 py-2 text-sm text-red-700 hover:bg-red-200"
+              aria-label={tr("chat.resetThread", "Reset thread")}
+              title={tr("chat.resetThread", "Reset thread")}
             >
-              {tr("chat.resetThread", "Reset thread")}
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                <path
+                  d="M4 11a8 8 0 0 1 14-5.3M20 13a8 8 0 0 1-14 5.3"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+                <path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="hidden sm:inline">{tr("chat.resetThread", "Reset thread")}</span>
             </button>
           </div>
         </header>
@@ -365,77 +487,44 @@ export default function ChatPage() {
         </form>
       </section>
 
-      <aside className="min-w-0 space-y-3 sm:space-y-4 lg:min-h-0 lg:overflow-y-auto">
-        <section className="rounded-2xl border border-red-200/60 bg-white/70 p-5 shadow-sm backdrop-blur-xl">
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-sm font-bold text-[rgb(173,8,8)]">{tr("chat.status", "Agent Information")}</h2>
-            <div className="flex items-center gap-1.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span>
-              {statusData?.status === "ok" ? "Online" : "Active"}
-            </div>
-          </div>
-          
-          <div className="flex flex-col gap-3 text-xs text-zinc-600">
-            <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
-              <span className="font-medium text-zinc-500">Cốt lõi</span>
-              <span className="font-semibold text-zinc-800">{statusData?.name || "Mira Multi-Agent"}</span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
-              <span className="font-medium text-zinc-500">Phiên bản</span>
-              <span className="font-semibold text-zinc-800">{statusData?.version || "1.0.0"}</span>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
-              <span className="font-medium text-zinc-500">Bảo mật</span>
-              <span className="font-semibold text-zinc-800">{statusData?.auth === "required" ? "Đã xác thực" : "Chế độ mở"}</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="flex min-h-0 flex-col rounded-2xl border border-red-200/60 bg-white/70 p-5 shadow-sm backdrop-blur-xl">
-          <div className="mb-4 flex items-center gap-2">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="text-[rgb(173,8,8)]"
-            >
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-            </svg>
-            <h2 className="text-sm font-bold text-[rgb(173,8,8)]">{tr("chat.skills", "Công cụ tích hợp")}</h2>
-          </div>
-
-          <div className="flex flex-wrap gap-2 overflow-y-auto">
-            {activeSkills.length > 0 ? (
-              activeSkills.map((skill: any, idx: number) => {
-                const name = typeof skill === "string" ? skill : skill.name || skill.id || "Skill";
-                const code = typeof skill === "object" && skill.code ? skill.code : name;
-                const desc = typeof skill === "object" && skill.description ? skill.description : undefined;
-                return (
-                  <span
-                    key={idx}
-                    draggable
-                    title={desc}
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", `/${code} `);
-                    }}
-                    className="inline-flex cursor-grab active:cursor-grabbing items-center rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 shadow-sm transition-colors hover:bg-red-50"
-                  >
-                    {name}
-                  </span>
-                );
-              })
-            ) : (
-              <p className="w-full py-4 text-center text-xs italic text-zinc-400">Không có công cụ nào khả dụng.</p>
-            )}
-          </div>
-        </section>
+      <aside className="hidden min-w-0 space-y-3 sm:space-y-4 lg:block lg:min-h-0 lg:overflow-y-auto">
+        {infoSections}
       </aside>
+
+      {infoOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm lg:hidden"
+          onClick={() => setInfoOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="absolute inset-y-0 right-0 flex w-[min(88vw,22rem)] flex-col bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={tr("chat.info", "Info")}
+          >
+            <div className="flex items-center justify-between border-b border-red-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">
+                {tr("chat.info", "Info")}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setInfoOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label={tr("chat.closeInfo", "Close")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
+                  <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto p-3 sm:space-y-4 sm:p-4">
+              {infoSections}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

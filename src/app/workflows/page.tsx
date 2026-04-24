@@ -393,6 +393,8 @@ export default function WorkflowsPage() {
   const [importingClone, setImportingClone] = useState(false);
   const [downloadingBackup, setDownloadingBackup] = useState(false);
   const cloneBackupFileInputRef = useRef<HTMLInputElement | null>(null);
+  type MobileTab = "list" | "canvas" | "inspector";
+  const [mobileTab, setMobileTab] = useState<MobileTab>("list");
   /** True when this page uses the real Fullscreen API on the canvas stage. */
   const [canvasApiFullscreen, setCanvasApiFullscreen] = useState(false);
   /** Fallback: hide side panels + expand in-page if requestFullscreen is unavailable or fails. */
@@ -718,16 +720,12 @@ export default function WorkflowsPage() {
             return acc;
           }, {}),
         );
-        if (normalized.length > 0) {
-          setSelectedWorkflowId((prev) => prev || normalized[0].id);
-        } else {
-          setSelectedWorkflowId("");
-        }
+        setSelectedWorkflowId("");
       } catch (_error) {
         if (ignore) return;
-        // Keep a functional canvas on first failure.
+        // Keep a functional list on first failure; no workflow selected.
         setWorkflows(MOCK_WORKFLOWS);
-        setSelectedWorkflowId(MOCK_WORKFLOWS[0].id);
+        setSelectedWorkflowId("");
         setLoadError(tr("workflowsUi.loadError", "Could not load workflows."));
       } finally {
         if (!ignore) setLoadingWorkflows(false);
@@ -1015,6 +1013,7 @@ export default function WorkflowsPage() {
       setSelectedEdgeId(null);
       setConnectFromNodeId(null);
       setDirty(false);
+      setMobileTab("canvas");
     } catch (_error) {
       setLoadError(tr("workflowsUi.createError", "Could not create workflow."));
     }
@@ -1075,6 +1074,7 @@ export default function WorkflowsPage() {
       setConnectFromNodeId(null);
       setPendingConnect(null);
       setDirty(false);
+      setMobileTab("canvas");
     } catch (err: unknown) {
       const e = err as { response?: { data?: { message?: string } }; message?: string };
       setLoadError(
@@ -1732,6 +1732,32 @@ export default function WorkflowsPage() {
     }
   }, []);
 
+  const clearWorkflowSelection = useCallback(() => {
+    setSelectedWorkflowId("");
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setConnectFromNodeId(null);
+    setPendingConnect(null);
+    setDirty(false);
+    setSaveError(null);
+    setVersionConflict(false);
+    setCanvasLayoutExpanded(false);
+    setMobileTab("list");
+    void exitCanvasStageFullscreen();
+  }, [exitCanvasStageFullscreen]);
+
+  useEffect(() => {
+    if (!selectedWorkflowId && mobileTab !== "list") {
+      setMobileTab("list");
+    }
+  }, [selectedWorkflowId, mobileTab]);
+
+  useEffect(() => {
+    if ((selectedNodeId || selectedEdgeId) && selectedWorkflowId) {
+      setMobileTab("inspector");
+    }
+  }, [selectedNodeId, selectedEdgeId, selectedWorkflowId]);
+
   const requestCanvasStageFullscreen = useCallback(async () => {
     const el = canvasStageRef.current;
     if (!el) return;
@@ -1766,16 +1792,14 @@ export default function WorkflowsPage() {
   }, []);
 
   useEffect(() => {
-    if (!canvasLayoutExpanded || canvasApiFullscreen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setCanvasLayoutExpanded(false);
-      }
+      if (e.key !== "Escape" || !selectedWorkflowId) return;
+      e.preventDefault();
+      clearWorkflowSelection();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [canvasLayoutExpanded, canvasApiFullscreen]);
+  }, [selectedWorkflowId, clearWorkflowSelection]);
 
   useEffect(() => {
     if (!canvasApiFullscreen) return;
@@ -1793,12 +1817,27 @@ export default function WorkflowsPage() {
   }, [canvasApiFullscreen]);
 
   const hideWorkflowSidePanels = canvasApiFullscreen || canvasLayoutExpanded;
+  const hideWorkflowInspectorPanel = hideWorkflowSidePanels || !selectedWorkflowId;
   const toolbarOnlyExitLayout = canvasLayoutExpanded && !canvasApiFullscreen;
+  const hideMobileTabBar = hideWorkflowSidePanels;
+  const leftPanelVisibility = hideWorkflowSidePanels
+    ? "hidden"
+    : mobileTab === "list"
+      ? "flex"
+      : "hidden md:flex";
+  const rightPanelVisibility = hideWorkflowInspectorPanel
+    ? "hidden"
+    : mobileTab === "inspector"
+      ? "flex"
+      : "hidden md:flex";
+  const canvasVisibility = hideWorkflowSidePanels || mobileTab === "canvas" ? "flex" : "hidden md:flex";
+  const canCanvasTab = Boolean(selectedWorkflowId);
+  const canInspectorTab = Boolean(selectedWorkflowId);
 
   return (
     <div className="relative flex h-full w-full min-h-0 flex-1 flex-col overflow-hidden bg-slate-50 min-[700px]:min-h-[600px]">
       <div className="relative h-full w-full min-h-0">
-        <section className={`pointer-events-auto absolute left-2 right-2 top-2 z-20 flex max-h-[min(48vh,420px)] w-auto flex-col overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:p-4 md:bottom-4 md:left-4 md:right-auto md:top-4 md:max-h-none md:w-[320px] ${hideWorkflowSidePanels ? "hidden" : ""}`}>
+        <section className={`pointer-events-auto absolute left-2 right-2 top-2 bottom-[56px] z-20 w-auto flex-col overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:p-4 md:bottom-4 md:left-4 md:right-auto md:top-4 md:max-h-none md:w-[320px] ${leftPanelVisibility}`}>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-[rgb(173,8,8)]">{tr("workflowsUi.workflows", "Workflows")}</h2>
             <div className="flex shrink-0 items-center gap-1">
@@ -1843,6 +1882,7 @@ export default function WorkflowsPage() {
                     setSelectedNodeId(null);
                     setSelectedEdgeId(null);
                     setConnectFromNodeId(null);
+                    setMobileTab("canvas");
                   }}
                   className={`min-w-0 w-full rounded-lg border px-3 py-1.5 text-left ${
                     active
@@ -1998,7 +2038,7 @@ export default function WorkflowsPage() {
 
         <div
           ref={canvasStageRef}
-          className="absolute inset-0 z-10 flex min-h-0 w-full min-w-0 flex-col overflow-hidden bg-slate-50"
+          className={`absolute inset-0 z-10 min-h-0 w-full min-w-0 flex-col overflow-hidden bg-slate-50 ${canvasVisibility}`}
         >
           {canvasApiFullscreen && (
             <div
@@ -2028,7 +2068,7 @@ export default function WorkflowsPage() {
             </div>
           )}
 
-          {!canvasApiFullscreen && (
+          {!canvasApiFullscreen && selectedWorkflow && (
             <div className="pointer-events-auto absolute left-1/2 top-4 z-30 flex max-w-[min(100%,calc(100vw-1.5rem))] -translate-x-1/2 items-center justify-between gap-2 rounded-2xl border border-white/60 bg-white/70 px-2 py-2 shadow-[0_8px_30px_rgb(0,0,0,0.06)] backdrop-blur-xl min-[500px]:gap-6 min-[500px]:px-4 min-[500px]:py-3 sm:px-3">
             <div className="flex min-w-0 items-center gap-1 min-[500px]:gap-2 sm:gap-2">
               <button
@@ -2272,6 +2312,9 @@ export default function WorkflowsPage() {
             onPointerDown={(e) => {
               const target = e.target as HTMLElement;
               if (target.id === "canvas-wrapper" || target.id === "canvas-layer" || target.tagName.toLowerCase() === "svg") {
+                if (selectedWorkflowId) {
+                  clearWorkflowSelection();
+                }
                 setIsPanning(true);
                 setPanStartUserPos({ x: e.clientX, y: e.clientY });
                 setPanStartOffset(panOffset);
@@ -2528,7 +2571,7 @@ export default function WorkflowsPage() {
           </div>
         </div>
 
-        <section className={`pointer-events-auto absolute bottom-2 left-2 right-2 z-20 flex max-h-[min(50vh,480px)] w-auto flex-col space-y-3 overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:space-y-4 sm:p-4 md:bottom-4 md:left-auto md:right-4 md:top-4 md:max-h-none md:w-[360px] md:rounded-3xl md:p-5 ${hideWorkflowSidePanels ? "hidden" : ""}`}>
+        <section className={`pointer-events-auto absolute bottom-[56px] left-2 right-2 top-2 z-20 w-auto flex-col space-y-3 overflow-y-auto rounded-2xl border border-white/60 bg-white/70 p-3 shadow-[0_8px_30px_rgb(0,0,0,0.08)] backdrop-blur-2xl scrollbar-thin scrollbar-track-transparent scrollbar-thumb-zinc-200 sm:space-y-4 sm:p-4 md:bottom-4 md:left-auto md:right-4 md:top-4 md:max-h-none md:w-[360px] md:rounded-3xl md:p-5 ${rightPanelVisibility}`}>
           <div className="flex min-w-0 items-center justify-between gap-2">
             <h2 className="min-w-0 text-sm font-semibold text-[rgb(173,8,8)]">
               {tr("workflowsUi.inspectorRun", "Inspector + Run")}
@@ -2863,6 +2906,69 @@ export default function WorkflowsPage() {
             )}
           </div>
         </section>
+
+        <nav
+          aria-label={tr("workflowsUi.mobileTabsAria", "Workflow sections")}
+          className={`pointer-events-auto absolute inset-x-0 bottom-0 z-30 grid h-12 grid-cols-3 items-stretch gap-1 border-t border-red-200 bg-white/95 px-1 backdrop-blur-xl shadow-[0_-4px_20px_rgba(0,0,0,0.05)] md:hidden ${hideMobileTabBar ? "hidden" : ""}`}
+        >
+          {([
+            {
+              id: "list" as const,
+              label: tr("workflowsUi.tabList", "Workflows"),
+              disabled: false,
+              icon: (
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                  <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              ),
+            },
+            {
+              id: "canvas" as const,
+              label: tr("workflowsUi.tabCanvas", "Canvas"),
+              disabled: !canCanvasTab,
+              icon: (
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                  <rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.6" />
+                  <circle cx="8" cy="10" r="1.6" stroke="currentColor" strokeWidth="1.6" />
+                  <circle cx="16" cy="14" r="1.6" stroke="currentColor" strokeWidth="1.6" />
+                  <path d="M9.3 11 14.7 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              ),
+            },
+            {
+              id: "inspector" as const,
+              label: tr("workflowsUi.tabInspector", "Inspector"),
+              disabled: !canInspectorTab,
+              icon: (
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                  <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.8" />
+                  <path d="M20 20l-4.3-4.3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              ),
+            },
+          ]).map((tab) => {
+            const active = mobileTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                disabled={tab.disabled}
+                onClick={() => setMobileTab(tab.id)}
+                aria-pressed={active}
+                className={`flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-md px-1 text-[10px] font-medium transition-colors ${
+                  active
+                    ? "bg-red-100 text-red-800"
+                    : tab.disabled
+                      ? "text-zinc-400"
+                      : "text-zinc-600 hover:bg-red-50 hover:text-red-700"
+                } disabled:cursor-not-allowed`}
+              >
+                {tab.icon}
+                <span className="truncate leading-none">{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
       </div>
     </div>
   );
