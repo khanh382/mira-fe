@@ -1,20 +1,88 @@
 "use client";
 
-import React, { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLang } from "@/lang";
-import { SendHorizontal } from "lucide-react";
+import { Film, Image as ImageIcon, Mic, Plus, SendHorizontal } from "lucide-react";
 import { getCurrentUser } from "@/services/AuthService";
 import {
   GatewayMessageItem,
   getGatewayHistory,
   getGatewaySkills,
   getGatewayStatus,
+  getGatewayThreads,
   resetGatewayThread,
   sendGatewayMessage,
+  switchGatewayThread,
 } from "@/services/GatewayService";
 
 const THREAD_STORAGE_KEY = "mira_web_thread_id";
 const THREAD_LIST_STORAGE_KEY = "mira_web_thread_list";
+
+const MAX_ATTACHMENTS = 12;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 24 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
+const MIN_VOICE_BYTES = 400;
+
+type PendingAttachment = {
+  id: string;
+  kind: "image" | "video" | "audio";
+  file: File;
+  previewUrl: string;
+};
+
+function pickAudioRecorderMime(): string {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+  for (const c of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return "audio/webm";
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function classifyMediaFile(file: File): "image" | "video" | null {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("video/")) return "video";
+  const n = file.name.toLowerCase();
+  if (/\.(jpe?g|png|gif|webp|bmp|svg|heic|avif)$/i.test(n)) return "image";
+  if (/\.(mp4|webm|mov|mkv|m4v|ogv)$/i.test(n)) return "video";
+  return null;
+}
+
+function filesFromDataTransfer(dt: DataTransfer): File[] {
+  const out: File[] = [];
+  if (dt.files?.length) {
+    for (let i = 0; i < dt.files.length; i++) out.push(dt.files[i]);
+  }
+  return out;
+}
+
+function filesFromClipboard(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const out: File[] = [];
+  if (data.files?.length) {
+    for (let i = 0; i < data.files.length; i++) out.push(data.files[i]);
+    if (out.length) return out;
+  }
+  if (data.items?.length) {
+    for (let i = 0; i < data.items.length; i++) {
+      const item = data.items[i];
+      if (item.kind === "file") {
+        const f = item.getAsFile();
+        if (f) out.push(f);
+      }
+    }
+  }
+  return out;
+}
 
 export default function ChatPage() {
   const { t } = useLang();
@@ -33,16 +101,53 @@ export default function ChatPage() {
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const [showTyping, setShowTyping] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const pendingAttachmentsRef = useRef(pendingAttachments);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const attachMenuRef = useRef<HTMLDivElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordStreamRef = useRef<MediaStream | null>(null);
+  const recordMimeRef = useRef<string>("");
+  const discardVoiceRef = useRef(false);
+  const voiceBusyRef = useRef(false);
+  const [isRecording, setIsRecording] = useState(false);
 
   const tr = (key: string, fallback: string) => {
     const value = t(key);
     return value === key ? fallback : value;
   };
 
-  useEffect(() => {
-    const storedThreadId = sessionStorage.getItem(THREAD_STORAGE_KEY);
-    if (storedThreadId) setThreadId(storedThreadId);
+  pendingAttachmentsRef.current = pendingAttachments;
 
+  useEffect(() => {
+    return () => {
+      pendingAttachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.previewUrl));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!attachMenuOpen) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const el = attachMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setAttachMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [attachMenuOpen]);
+
+  useEffect(() => {
+    if (!attachMenuOpen) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setAttachMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [attachMenuOpen]);
+
+  useEffect(() => {
     const storedThreadList = localStorage.getItem(THREAD_LIST_STORAGE_KEY);
     if (storedThreadList) {
       try {
@@ -56,30 +161,62 @@ export default function ChatPage() {
     }
   }, []);
 
+  const persistThreadOptions = (ids: string[]) => {
+    const next = [...new Set(ids.filter(Boolean))].slice(0, 50);
+    localStorage.setItem(THREAD_LIST_STORAGE_KEY, JSON.stringify(next));
+    return next;
+  };
+
   const upsertThreadOption = (value: string) => {
     if (!value) return;
-    setThreadOptions((prev) => {
-      const next = [value, ...prev.filter((item) => item !== value)].slice(0, 50);
-      localStorage.setItem(THREAD_LIST_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
+    setThreadOptions((prev) => persistThreadOptions([value, ...prev.filter((item) => item !== value)]));
+  };
+
+  const mergeThreadIds = (...groups: (string | undefined)[][]) => {
+    const out: string[] = [];
+    for (const g of groups) {
+      for (const id of g) {
+        if (id && !out.includes(id)) out.push(id);
+        if (out.length >= 50) break;
+      }
+      if (out.length >= 50) break;
+    }
+    return out;
+  };
+
+  /** Align server active thread (GET /gateway/history is for active thread only), then load UI. */
+  const ensureActiveThread = async (preferredThreadId: string | null) => {
+    if (!preferredThreadId) return;
+    try {
+      await switchGatewayThread(preferredThreadId);
+    } catch {
+      sessionStorage.removeItem(THREAD_STORAGE_KEY);
+    }
   };
 
   const loadHistory = async () => {
     setLoadingHistory(true);
     setError("");
+    const preferred = sessionStorage.getItem(THREAD_STORAGE_KEY);
     try {
-      const [historyRes, statusRes, skillsRes] = await Promise.all([
+      await ensureActiveThread(preferred);
+      const [historyRes, statusRes, skillsRes, threadsRes] = await Promise.all([
         getGatewayHistory(50),
         getGatewayStatus(),
         getGatewaySkills(),
+        getGatewayThreads().catch(() => ({ data: { items: [] as const } })),
       ]);
       setMessages(historyRes.data.messages || []);
-      setThreadId(historyRes.data.threadId || "");
-      if (historyRes.data.threadId) {
-        sessionStorage.setItem(THREAD_STORAGE_KEY, historyRes.data.threadId);
-        upsertThreadOption(historyRes.data.threadId);
+      const resolvedId = historyRes.data.threadId || "";
+      setThreadId(resolvedId);
+      if (resolvedId) {
+        sessionStorage.setItem(THREAD_STORAGE_KEY, resolvedId);
       }
+      const serverIds =
+        threadsRes.data?.items?.map((it) => it.threadId).filter((id): id is string => Boolean(id)) ?? [];
+      setThreadOptions((prev) =>
+        persistThreadOptions(mergeThreadIds(serverIds, [resolvedId], prev)),
+      );
       setStatusData(statusRes.data);
       setSkillsData(skillsRes.data);
     } catch (e: any) {
@@ -90,7 +227,7 @@ export default function ChatPage() {
   };
 
   useEffect(() => {
-    loadHistory();
+    void loadHistory();
   }, []);
 
   useEffect(() => {
@@ -104,7 +241,212 @@ export default function ChatPage() {
     })();
   }, []);
 
-  const canSend = useMemo(() => input.trim().length > 0 && !sending, [input, sending]);
+  const canSend = useMemo(
+    () =>
+      (input.trim().length > 0 || pendingAttachments.length > 0) && !sending && !isRecording,
+    [input, pendingAttachments.length, sending, isRecording],
+  );
+
+  const removePendingAttachment = (id: string) => {
+    setPendingAttachments((prev) => {
+      const found = prev.find((a) => a.id === id);
+      if (found) URL.revokeObjectURL(found.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  };
+
+  /** Same queue as picker: paste, drop on input or message list, or + menu. */
+  const enqueueMediaFiles = (files: File[], options?: { only?: "image" | "video" }) => {
+    if (!files.length) return;
+    const only = options?.only;
+    const filtered = files.filter((f) => {
+      const k = classifyMediaFile(f);
+      if (!k) return false;
+      if (only && k !== only) return false;
+      return true;
+    });
+    if (!filtered.length) return;
+
+    setError("");
+    let limitHit = false;
+    let sizeRejected = false;
+    setPendingAttachments((prev) => {
+      const next = [...prev];
+      for (const file of filtered) {
+        const kind = classifyMediaFile(file)!;
+        const maxBytes = kind === "image" ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES;
+        if (next.length >= MAX_ATTACHMENTS) {
+          limitHit = true;
+          break;
+        }
+        if (file.size > maxBytes) {
+          sizeRejected = true;
+          continue;
+        }
+        next.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`,
+          kind,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        });
+      }
+      return next;
+    });
+    if (limitHit) setError(tr("chat.tooManyAttachments", "Up to 12 attachments per message."));
+    else if (sizeRejected) setError(tr("chat.mediaTooLarge", "File exceeds size limit."));
+  };
+
+  const addFilesFromPicker = (fileList: FileList | null, kind: "image" | "video") => {
+    if (!fileList?.length) return;
+    enqueueMediaFiles(Array.from(fileList), { only: kind });
+    setAttachMenuOpen(false);
+  };
+
+  const handleComposerPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = filesFromClipboard(e.clipboardData);
+    const media = files.filter((f) => classifyMediaFile(f));
+    if (!media.length) return;
+    e.preventDefault();
+    enqueueMediaFiles(media);
+  };
+
+  const handleFileDrop = (e: React.DragEvent, options?: { only?: "image" | "video" }) => {
+    const files = filesFromDataTransfer(e.dataTransfer);
+    let media = files.filter((f) => classifyMediaFile(f));
+    if (options?.only) media = media.filter((f) => classifyMediaFile(f) === options.only);
+    if (!media.length) return false;
+    e.preventDefault();
+    enqueueMediaFiles(media, options?.only ? { only: options.only } : undefined);
+    return true;
+  };
+
+  const cancelVoiceRecording = useCallback(() => {
+    const rec = mediaRecorderRef.current;
+    if (rec && (rec.state === "recording" || rec.state === "paused")) {
+      discardVoiceRef.current = true;
+      try {
+        rec.requestData?.();
+      } catch {
+        /* ignore */
+      }
+      rec.stop();
+    }
+  }, []);
+
+  const toggleVoiceRecording = async () => {
+    if (sending) return;
+    if (typeof window === "undefined" || typeof MediaRecorder === "undefined") {
+      setError(tr("chat.voiceUnsupported", "Voice recording is not supported in this browser."));
+      return;
+    }
+    const rec = mediaRecorderRef.current;
+    if (rec && (rec.state === "recording" || rec.state === "paused")) {
+      discardVoiceRef.current = false;
+      try {
+        rec.requestData?.();
+      } catch {
+        /* ignore */
+      }
+      rec.stop();
+      return;
+    }
+    if (voiceBusyRef.current) return;
+    voiceBusyRef.current = true;
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+      recordChunksRef.current = [];
+      recordStreamRef.current = stream;
+      const mime = pickAudioRecorderMime();
+      recordMimeRef.current = mime;
+      const opts: MediaRecorderOptions = MediaRecorder.isTypeSupported(mime) ? { mimeType: mime } : {};
+      const mr = new MediaRecorder(stream, opts);
+      mediaRecorderRef.current = mr;
+      mr.ondataavailable = (ev) => {
+        if (ev.data.size > 0) recordChunksRef.current.push(ev.data);
+      };
+      mr.onstop = () => {
+        const streamNow = recordStreamRef.current;
+        recordStreamRef.current = null;
+        streamNow?.getTracks().forEach((t) => t.stop());
+        mediaRecorderRef.current = null;
+        setIsRecording(false);
+        const mimeType = recordMimeRef.current || "audio/webm";
+        const chunks = recordChunksRef.current;
+        recordChunksRef.current = [];
+        if (discardVoiceRef.current) {
+          discardVoiceRef.current = false;
+          return;
+        }
+        if (!chunks.length) return;
+        const blob = new Blob(chunks, { type: mimeType });
+        if (blob.size < MIN_VOICE_BYTES) {
+          setError(tr("chat.voiceTooShort", "Recording is too short."));
+          return;
+        }
+        if (blob.size > MAX_AUDIO_BYTES) {
+          setError(tr("chat.mediaTooLarge", "File exceeds size limit."));
+          return;
+        }
+        const ext = mimeType.includes("ogg") ? "ogg" : "webm";
+        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || mimeType });
+        const previewUrl = URL.createObjectURL(blob);
+        setPendingAttachments((prev) => {
+          if (prev.length >= MAX_ATTACHMENTS) {
+            URL.revokeObjectURL(previewUrl);
+            setError(tr("chat.tooManyAttachments", "Up to 12 attachments per message."));
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              id: `voice-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              kind: "audio" as const,
+              file,
+              previewUrl,
+            },
+          ];
+        });
+      };
+      mr.start(400);
+      setIsRecording(true);
+    } catch {
+      setError(tr("chat.voicePermission", "Microphone access was denied or is unavailable."));
+      recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+      recordStreamRef.current = null;
+    } finally {
+      voiceBusyRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") cancelVoiceRecording();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isRecording, cancelVoiceRecording]);
+
+  useEffect(() => {
+    return () => {
+      discardVoiceRef.current = true;
+      const r = mediaRecorderRef.current;
+      if (r && (r.state === "recording" || r.state === "paused")) {
+        try {
+          r.requestData?.();
+        } catch {
+          /* ignore */
+        }
+        r.stop();
+      }
+      recordStreamRef.current?.getTracks().forEach((t) => t.stop());
+      recordStreamRef.current = null;
+      mediaRecorderRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const el = inputRef.current;
@@ -113,12 +455,12 @@ export default function ChatPage() {
     el.style.height = "0px";
     const nextHeight = el.scrollHeight;
     el.style.height = `${nextHeight}px`;
-  }, [input]);
+  }, [input, pendingAttachments.length]);
 
   useEffect(() => {
     if (!messagesContainerRef.current) return;
     messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-  }, [messages, showTyping]);
+  }, [messages, showTyping, pendingAttachments.length]);
 
   useEffect(() => {
     return () => {
@@ -148,17 +490,56 @@ export default function ChatPage() {
 
   const onSend = async (e: FormEvent) => {
     e.preventDefault();
-    if (!canSend) return;
+    const text = input.trim();
+    if ((!text && pendingAttachments.length === 0) || sending) return;
+
+    const snap = [...pendingAttachments];
+    let mediaPayload: { mediaUrl?: string; mediaPaths?: string[] } = {};
+    let attachmentViews: GatewayMessageItem["attachments"] | undefined;
+
+    if (snap.length > 0) {
+      try {
+        const dataUrls: string[] = [];
+        const kinds: ("image" | "video" | "audio")[] = [];
+        for (const a of snap) {
+          const maxBytes =
+            a.kind === "image" ? MAX_IMAGE_BYTES : a.kind === "video" ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES;
+          if (a.file.size > maxBytes) {
+            setError(tr("chat.mediaTooLarge", "File exceeds size limit."));
+            return;
+          }
+          dataUrls.push(await readFileAsDataUrl(a.file));
+          kinds.push(a.kind);
+        }
+        attachmentViews = dataUrls.map((url, i) => ({ kind: kinds[i], url }));
+        if (dataUrls.length === 1) {
+          mediaPayload = { mediaUrl: dataUrls[0] };
+        } else if (dataUrls.length > 1) {
+          mediaPayload = { mediaUrl: dataUrls[0], mediaPaths: dataUrls.slice(1) };
+        }
+      } catch {
+        setError(tr("chat.mediaReadError", "Could not read an attachment."));
+        return;
+      }
+      for (const a of snap) {
+        URL.revokeObjectURL(a.previewUrl);
+      }
+      setPendingAttachments([]);
+    }
+
+    const contentToSend = text || (snap.length > 0 ? " " : "");
+    const displayContent =
+      text || (snap.length > 0 ? tr("chat.mediaOnlyPlaceholder", "(Media attached)") : "");
 
     const userMessage: GatewayMessageItem = {
       id: `local-${Date.now()}`,
       role: "user",
-      content: input.trim(),
+      content: displayContent,
       createdAt: new Date().toISOString(),
+      ...(attachmentViews?.length ? { attachments: attachmentViews } : {}),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    const contentToSend = input.trim();
     setInput("");
     setSending(true);
     setShowTyping(false);
@@ -175,6 +556,7 @@ export default function ChatPage() {
       const response = await sendGatewayMessage({
         content: contentToSend,
         threadId: threadId || undefined,
+        ...mediaPayload,
       });
 
       const nextThreadId = response.data.threadId;
@@ -233,12 +615,26 @@ export default function ChatPage() {
 
   const onChangeThread = async (nextThreadId: string) => {
     if (!nextThreadId || nextThreadId === threadId) return;
-    setThreadId(nextThreadId);
-    sessionStorage.setItem(THREAD_STORAGE_KEY, nextThreadId);
-    upsertThreadOption(nextThreadId);
-    // Backend currently exposes history only for active thread.
-    // We switch the local target thread for next sends.
-    setMessages([]);
+    setLoadingHistory(true);
+    setError("");
+    try {
+      await switchGatewayThread(nextThreadId);
+      sessionStorage.setItem(THREAD_STORAGE_KEY, nextThreadId);
+      upsertThreadOption(nextThreadId);
+      const historyRes = await getGatewayHistory(50);
+      setMessages(historyRes.data.messages || []);
+      const resolvedId = historyRes.data.threadId || nextThreadId;
+      setThreadId(resolvedId);
+      if (resolvedId) sessionStorage.setItem(THREAD_STORAGE_KEY, resolvedId);
+    } catch (e: any) {
+      setError(
+        e?.response?.data?.message ||
+          e?.message ||
+          tr("chat.switchThreadError", "Could not switch to this thread."),
+      );
+    } finally {
+      setLoadingHistory(false);
+    }
   };
   const activeSkills = useMemo(() => {
     if (!skillsData) return [];
@@ -390,7 +786,25 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <div ref={messagesContainerRef} className="flex-1 min-h-0 space-y-3 overflow-auto p-2 sm:p-4">
+        <div
+          ref={messagesContainerRef}
+          onDragOver={(e) => {
+            const types = e.dataTransfer.types;
+            const hasFiles = types ? [...types].includes("Files") : false;
+            if (hasFiles) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+            }
+          }}
+          onDrop={(e) => {
+            const files = filesFromDataTransfer(e.dataTransfer);
+            if (files.length) {
+              e.preventDefault();
+              handleFileDrop(e);
+            }
+          }}
+          className="flex-1 min-h-0 space-y-3 overflow-auto p-2 sm:p-4"
+        >
           {loadingHistory && (
             <p className="text-sm text-zinc-500">{tr("chat.loading", "Loading conversation...")}</p>
           )}
@@ -422,6 +836,35 @@ export default function ChatPage() {
                 <span>{formatMessageTime(msg.createdAt)}</span>
               </div>
               <p className="whitespace-pre-wrap">{msg.content}</p>
+              {msg.attachments && msg.attachments.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {msg.attachments.map((att, idx) =>
+                    att.kind === "image" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={idx}
+                        src={att.url}
+                        alt=""
+                        className="max-h-52 max-w-full rounded-lg object-contain ring-1 ring-black/10"
+                      />
+                    ) : att.kind === "video" ? (
+                      <video
+                        key={idx}
+                        src={att.url}
+                        controls
+                        className="max-h-52 max-w-full rounded-lg ring-1 ring-black/10"
+                      />
+                    ) : (
+                      <audio
+                        key={idx}
+                        src={att.url}
+                        controls
+                        className="max-w-full rounded-lg ring-1 ring-white/30"
+                      />
+                    ),
+                  )}
+                </div>
+              )}
             </div>
           ))}
 
@@ -446,43 +889,181 @@ export default function ChatPage() {
               {error}
             </p>
           )}
-          <div className="relative">
-            <textarea
-              ref={inputRef}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={onInputKeyDown}
-              onDragOver={(e) => {
-                e.preventDefault();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const text = e.dataTransfer.getData("text/plain");
-                if (text) {
-                  // Attempt to insert at cursor
-                  const target = e.target as HTMLTextAreaElement;
-                  const start = target.selectionStart;
-                  const end = target.selectionEnd;
-                  if (start !== null && end !== null) {
-                    const next = input.slice(0, start) + text + input.slice(end);
-                    setInput(next);
-                  } else {
-                    setInput((prev) => prev + (prev.endsWith(" ") || prev === "" ? "" : " ") + text);
-                  }
-                }
-              }}
-              placeholder={tr("chat.placeholder", "Type your message to the Mira agent...")}
-              className="min-h-11 w-full resize-none overflow-hidden rounded-xl border border-red-300 bg-white px-4 py-3 pr-14 font-sans text-sm leading-normal tracking-tight text-zinc-800 outline-none focus:border-red-300 focus:ring-0"
-            />
+          {isRecording && (
+            <p className="mb-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800">
+              <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-600" aria-hidden />
+              {tr("chat.voiceRecording", "Recording…")}
+            </p>
+          )}
+          {pendingAttachments.length > 0 && (
+            <div className="mb-2 rounded-xl border border-zinc-200/90 bg-zinc-50 px-2 py-2 shadow-inner">
+              <div className="flex max-h-[5.5rem] gap-2 overflow-x-auto overflow-y-hidden overscroll-x-contain pb-0.5 [-ms-overflow-style:none] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300">
+                {pendingAttachments.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`relative h-[4.5rem] shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm ${
+                      a.kind === "audio" ? "min-w-[9.5rem] w-[9.5rem] px-1.5 py-1" : "w-[4.5rem]"
+                    }`}
+                  >
+                    {a.kind === "image" ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={a.previewUrl} alt="" className="h-full w-full object-cover" />
+                    ) : a.kind === "video" ? (
+                      <video src={a.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                    ) : (
+                      <div className="relative flex h-full flex-col items-stretch justify-end gap-0.5 pb-1 pt-5">
+                        <div className="pointer-events-none flex items-center justify-center gap-1 text-red-600">
+                          <Mic size={14} strokeWidth={2.5} />
+                          <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            {tr("chat.voiceBadge", "Voice")}
+                          </span>
+                        </div>
+                        <audio src={a.previewUrl} controls className="relative z-0 h-8 w-full max-w-full" />
+                      </div>
+                    )}
+                    {a.kind === "video" && (
+                      <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/55 px-1 py-0.5 text-[9px] font-medium uppercase text-white">
+                        {tr("chat.videoBadge", "Video")}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removePendingAttachment(a.id)}
+                      className="absolute right-0.5 top-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/65 text-[11px] font-bold leading-none text-white shadow-sm hover:bg-black/80"
+                      aria-label={tr("chat.removeAttachment", "Remove file")}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <div className="relative shrink-0 pb-0.5" ref={attachMenuRef}>
+              <button
+                type="button"
+                disabled={sending || isRecording}
+                onClick={() => setAttachMenuOpen((o) => !o)}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-red-300 bg-white text-red-700 outline-none transition hover:bg-red-50 focus:border-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={tr("chat.addAttachment", "Attach")}
+                aria-expanded={attachMenuOpen}
+                aria-haspopup="menu"
+              >
+                <Plus size={20} strokeWidth={2.25} />
+              </button>
+              {attachMenuOpen && (
+                <div
+                  className="absolute bottom-full left-0 z-20 mb-1 min-w-[10rem] overflow-hidden rounded-xl border border-red-200 bg-white py-1 shadow-lg"
+                  role="menu"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-800 hover:bg-red-50"
+                    onClick={() => imageInputRef.current?.click()}
+                  >
+                    <ImageIcon size={16} className="text-red-600" />
+                    {tr("chat.addImage", "Image")}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-800 hover:bg-red-50"
+                    onClick={() => videoInputRef.current?.click()}
+                  >
+                    <Film size={16} className="text-red-600" />
+                    {tr("chat.addVideo", "Video")}
+                  </button>
+                </div>
+              )}
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addFilesFromPicker(e.target.files, "image");
+                  e.target.value = "";
+                }}
+              />
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addFilesFromPicker(e.target.files, "video");
+                  e.target.value = "";
+                }}
+              />
+            </div>
             <button
-              type="submit"
-              disabled={!canSend}
-              className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 appearance-none items-center justify-center rounded-full border border-transparent bg-zinc-200 text-zinc-600 outline-none ring-0 transition hover:bg-zinc-300 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
-              aria-label={tr("chat.send", "Send")}
+              type="button"
+              disabled={sending}
+              onClick={() => void toggleVoiceRecording()}
+              title={
+                isRecording
+                  ? tr("chat.voiceStopHint", "Tap again to finish and attach")
+                  : tr("chat.voiceRecordHint", "Tap to record voice; Esc to cancel while recording")
+              }
+              aria-pressed={isRecording}
+              aria-label={
+                isRecording
+                  ? tr("chat.voiceStopHint", "Tap again to finish and attach")
+                  : tr("chat.voiceRecordHint", "Tap to record voice")
+              }
+              className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border outline-none transition focus:border-red-400 disabled:cursor-not-allowed disabled:opacity-50 ${
+                isRecording
+                  ? "animate-pulse border-red-500 bg-red-600 text-white shadow-md"
+                  : "border-red-300 bg-white text-red-700 hover:bg-red-50"
+              }`}
             >
-              <SendHorizontal size={15} />
+              <Mic size={20} strokeWidth={2.25} />
             </button>
+            <div className="relative min-w-0 flex-1">
+              <textarea
+                ref={inputRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={onInputKeyDown}
+                onPaste={handleComposerPaste}
+                onDragOver={(e) => {
+                  const types = e.dataTransfer.types;
+                  if (types && [...types].includes("Files")) e.dataTransfer.dropEffect = "copy";
+                  e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  if (handleFileDrop(e)) return;
+                  e.preventDefault();
+                  const text = e.dataTransfer.getData("text/plain");
+                  if (text) {
+                    const target = e.target as HTMLTextAreaElement;
+                    const start = target.selectionStart;
+                    const end = target.selectionEnd;
+                    if (start !== null && end !== null) {
+                      const next = input.slice(0, start) + text + input.slice(end);
+                      setInput(next);
+                    } else {
+                      setInput((prev) => prev + (prev.endsWith(" ") || prev === "" ? "" : " ") + text);
+                    }
+                  }
+                }}
+                placeholder={tr("chat.placeholder", "Type your message to the Mira agent...")}
+                className="min-h-11 w-full resize-none overflow-hidden rounded-xl border border-red-300 bg-white px-4 py-3 pr-14 font-sans text-sm leading-normal tracking-tight text-zinc-800 outline-none focus:border-red-300 focus:ring-0"
+              />
+              <button
+                type="submit"
+                disabled={!canSend}
+                className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 appearance-none items-center justify-center rounded-full border border-transparent bg-zinc-200 text-zinc-600 outline-none ring-0 transition hover:bg-zinc-300 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                aria-label={tr("chat.send", "Send")}
+              >
+                <SendHorizontal size={15} />
+              </button>
+            </div>
           </div>
         </form>
       </section>
