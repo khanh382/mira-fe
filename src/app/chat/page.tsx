@@ -2,9 +2,11 @@
 
 import React, { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLang } from "@/lang";
-import { Film, Image as ImageIcon, Mic, Plus, SendHorizontal } from "lucide-react";
+import { Film, FolderX, Image as ImageIcon, Mic, Plus, SendHorizontal, Trash2 } from "lucide-react";
 import { getCurrentUser } from "@/services/AuthService";
 import {
+  deleteAllGatewayThreads,
+  deleteCurrentGatewayThread,
   GatewayMessageItem,
   getGatewayHistory,
   getGatewaySkills,
@@ -191,6 +193,53 @@ export default function ChatPage() {
       await switchGatewayThread(preferredThreadId);
     } catch {
       sessionStorage.removeItem(THREAD_STORAGE_KEY);
+    }
+  };
+
+  /** After soft-deleting thread(s): clear stored id, resolve new active thread (history or reset). */
+  const rehydrateAfterThreadDeletion = async () => {
+    sessionStorage.removeItem(THREAD_STORAGE_KEY);
+    setPendingAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.previewUrl));
+      return [];
+    });
+    setInput("");
+    try {
+      const [historyRes, threadsRes] = await Promise.all([
+        getGatewayHistory(50),
+        getGatewayThreads().catch(() => ({ data: { items: [] as const } })),
+      ]);
+      let resolvedId = historyRes.data.threadId || "";
+      let msgs = historyRes.data.messages || [];
+      if (!resolvedId) {
+        const resetRes = await resetGatewayThread("rehydrate_after_thread_delete");
+        resolvedId = resetRes.data.threadId;
+        msgs = [];
+      }
+      setMessages(msgs);
+      setThreadId(resolvedId);
+      if (resolvedId) sessionStorage.setItem(THREAD_STORAGE_KEY, resolvedId);
+      const serverIds =
+        threadsRes.data?.items?.map((it) => it.threadId).filter((id): id is string => Boolean(id)) ?? [];
+      setThreadOptions(
+        persistThreadOptions(mergeThreadIds(serverIds, resolvedId ? [resolvedId] : [], [])),
+      );
+    } catch (e: any) {
+      setError(e?.response?.data?.message || e?.message || tr("chat.rehydrateError", "Could not open a new chat session."));
+      try {
+        const resetRes = await resetGatewayThread("rehydrate_after_thread_delete_fallback");
+        const newId = resetRes.data.threadId;
+        setThreadId(newId);
+        sessionStorage.setItem(THREAD_STORAGE_KEY, newId);
+        setMessages([]);
+        setThreadOptions(persistThreadOptions([newId]));
+      } catch (e2: any) {
+        setError(
+          e2?.response?.data?.message ||
+            e2?.message ||
+            tr("chat.rehydrateError", "Could not open a new chat session."),
+        );
+      }
     }
   };
 
@@ -606,6 +655,48 @@ export default function ChatPage() {
     }
   };
 
+  const onDeleteCurrentThread = async () => {
+    if (!threadId || loadingHistory) return;
+    if (!window.confirm(tr("chat.deleteCurrentConfirm", "Delete this chat thread? It will be removed from your list."))) {
+      return;
+    }
+    setError("");
+    setLoadingHistory(true);
+    try {
+      await deleteCurrentGatewayThread();
+      await rehydrateAfterThreadDeletion();
+    } catch (e: any) {
+      setError(
+        e?.response?.data?.message || e?.message || tr("chat.deleteThreadError", "Could not delete this thread."),
+      );
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const onDeleteAllThreads = async () => {
+    if (loadingHistory) return;
+    if (
+      !window.confirm(
+        tr("chat.deleteAllConfirm", "Delete ALL your web chat threads? This cannot be undone."),
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setLoadingHistory(true);
+    try {
+      await deleteAllGatewayThreads();
+      await rehydrateAfterThreadDeletion();
+    } catch (e: any) {
+      setError(
+        e?.response?.data?.message || e?.message || tr("chat.deleteAllError", "Could not delete all threads."),
+      );
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
   const formatMessageTime = (value?: string) => {
     if (!value) return "";
     const date = new Date(value);
@@ -752,7 +843,7 @@ export default function ChatPage() {
               <span>{tr("chat.info", "Info")}</span>
             </button>
           </div>
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <select
               value={threadId || ""}
               onChange={(e) => void onChangeThread(e.target.value)}
@@ -765,6 +856,26 @@ export default function ChatPage() {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={() => void onDeleteCurrentThread()}
+              disabled={!threadId || loadingHistory}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label={tr("chat.deleteCurrentThread", "Delete this thread")}
+              title={tr("chat.deleteCurrentThread", "Delete this thread")}
+            >
+              <Trash2 size={18} strokeWidth={2} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void onDeleteAllThreads()}
+              disabled={loadingHistory}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label={tr("chat.deleteAllThreads", "Delete all threads")}
+              title={tr("chat.deleteAllThreads", "Delete all web chat threads")}
+            >
+              <FolderX size={18} strokeWidth={2} />
+            </button>
             <button
               type="button"
               onClick={onResetThread}

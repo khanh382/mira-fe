@@ -560,7 +560,14 @@
     "voiceRecording": "Đang ghi âm…",
     "voicePermission": "Không truy cập được micro hoặc bạn đã từ chối quyền.",
     "voiceTooShort": "Bản ghi quá ngắn.",
-    "voiceUnsupported": "Trình duyệt không hỗ trợ ghi âm (MediaRecorder)."
+    "voiceUnsupported": "Trình duyệt không hỗ trợ ghi âm (MediaRecorder).",
+    "deleteCurrentThread": "Xóa luồng đang chọn (soft delete)",
+    "deleteAllThreads": "Xóa tất cả luồng web",
+    "deleteCurrentConfirm": "Xóa luồng chat web đang active? Luồng sẽ biến mất khỏi danh sách (soft delete).",
+    "deleteAllConfirm": "Xóa TẤT CẢ luồng chat web của bạn? Hành động này không thể hoàn tác (soft delete).",
+    "deleteThreadError": "Không thể xóa luồng này.",
+    "deleteAllError": "Không thể xóa toàn bộ luồng.",
+    "rehydrateError": "Không thể mở phiên chat mới sau khi xóa."
   },
   "users": {
     "title": "Bảng điều khiển Users API",

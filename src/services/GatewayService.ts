@@ -96,6 +96,24 @@ export const switchGatewayThread = async (threadId: string) => {
   return response.data;
 };
 
+/** Soft-delete the active web thread (`status=life` + is_active). */
+export const deleteCurrentGatewayThread = async () => {
+  const response = await axiosClient.post<ApiResponse<{ threadId: string; message: string }>>(
+    "/gateway/threads/delete-current",
+    {},
+  );
+  return response.data;
+};
+
+/** Soft-delete all life web threads for the current user. */
+export const deleteAllGatewayThreads = async () => {
+  const response = await axiosClient.post<ApiResponse<{ deletedCount: number; message: string }>>(
+    "/gateway/threads/delete-all",
+    {},
+  );
+  return response.data;
+};
+
 export const getGatewaySkills = async () => {
   const response = await axiosClient.get<ApiResponse<any>>("/gateway/skills");
   return response.data;

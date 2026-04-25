@@ -560,7 +560,14 @@
     "voiceRecording": "Recording…",
     "voicePermission": "Microphone is unavailable or permission was denied.",
     "voiceTooShort": "Recording is too short.",
-    "voiceUnsupported": "This browser does not support voice recording (MediaRecorder)."
+    "voiceUnsupported": "This browser does not support voice recording (MediaRecorder).",
+    "deleteCurrentThread": "Delete this thread",
+    "deleteAllThreads": "Delete all web threads",
+    "deleteCurrentConfirm": "Delete the active web chat thread? It will disappear from your list (soft delete).",
+    "deleteAllConfirm": "Delete ALL your web chat threads? This cannot be undone (soft delete).",
+    "deleteThreadError": "Could not delete this thread.",
+    "deleteAllError": "Could not delete all threads.",
+    "rehydrateError": "Could not open a new chat session after delete."
   },
   "users": {
     "title": "Users API Console",

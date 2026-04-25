@@ -20,7 +20,8 @@ Tai lieu mo ta chi tiet API va WebSocket khi frontend chat voi **agent system** 
 
 ## Data model chinh trong chat web
 
-- `threadId` (uuid): id phien chat
+- `threadId` (uuid): id phien chat (bang `chat_threads`)
+- `chat_threads.status`: enum `life` | `delete` (mac dinh `life`). `delete` = soft-delete: **khong** dung duoc de chat / history / switch / WebSocket `message` tren thread do.
 - Message roles: `user`, `assistant`, ...
 - Moi request chat tra:
   - `response` (text)
@@ -80,6 +81,7 @@ Tai lieu mo ta chi tiet API va WebSocket khi frontend chat voi **agent system** 
 
 - `401`: token khong hop le / het han
 - `400`/`403`: threadId khong hop le cho kenh hien tai (cross-platform)
+- `403`: thread web da `status=delete` (client van gui `threadId` cu)
 
 ---
 
@@ -221,10 +223,80 @@ Tai lieu mo ta chi tiet API va WebSocket khi frontend chat voi **agent system** 
 
 - `404`: thread khong ton tai hoac khong thuoc user
 - `400`: thread khong phai web
+- `403`: thread web da `status=delete`
 
 ---
 
-### 6) Skills va status (ho tro UI)
+### 6) Xoa mem phien web dang active (soft delete)
+
+`POST /gateway/threads/delete-current`
+
+#### Auth
+
+- JWT bat buoc
+
+#### Body
+
+- Khong can body
+
+#### Hanh vi
+
+- Tim thread web dang `is_active` + `status=life` cua user
+- Gan `status=delete`, `is_active=false`
+- `GET /gateway/threads` chi con liet ke thread `life` (thread da xoa bien mat khoi list)
+
+#### Response example
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "threadId": "8c5f2d6b-...",
+    "message": "Web thread marked deleted: 8c5f2d6b-..."
+  }
+}
+```
+
+#### Loi thuong gap
+
+- `404`: khong co thread web active nao
+
+---
+
+### 7) Xoa mem toan bo phien chat web (soft delete)
+
+`POST /gateway/threads/delete-all`
+
+#### Auth
+
+- JWT bat buoc
+
+#### Body
+
+- Khong can body
+
+#### Hanh vi
+
+- Tat ca hang `chat_threads` cua user voi `platform=web` va `status=life` -> `status=delete`, `is_active=false`
+- **Khong** doi thread Telegram/Zalo/Discord
+
+#### Response example
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "deletedCount": 3,
+    "message": "Marked 3 web thread(s) as deleted"
+  }
+}
+```
+
+---
+
+### 8) Skills va status (ho tro UI)
 
 - `GET /gateway/skills` (public)
 - `GET /gateway/skill-catalog` (JWT)
@@ -289,7 +361,7 @@ Payload:
 - `message:delta` (chunk stream; xuat hien khi luong OpenClaw stream)
 - `message:response` (ban response cuoi)
 - `message:done`
-- `message:error` neu loi
+- `message:error` neu loi (vi du thread web `status=delete`, hoac `403` tu backend)
 
 Ngoai ra event return ACK:
 
@@ -316,6 +388,7 @@ Backend da enforce:
 - Web request chi duoc dung thread `platform=web`
 - Telegram/Zalo/Discord thread khong duoc dung chung voi web
 - Thread explicit sai kenh/actor se bi tu choi
+- Thread web `status=delete`: **cam** `POST /gateway/message` / WebSocket `message` voi `threadId` toi thread do (`403`); **cam** `POST /gateway/threads/switch` vao thread do (`403`). `GET /gateway/threads` khong tra thread `delete`. `GET /gateway/history` luon theo thread web **active** `life` (sau khi xoa het session, lan goi tiep theo co the `resolve` tao thread `life` moi neu chua co active).
 
 Dieu nay dam bao:
 
