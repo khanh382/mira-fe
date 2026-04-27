@@ -362,6 +362,7 @@
     "saving": "Đang lưu..."
   },
   "workflowsUi": {
+    "refocusWorkflowPanel": "Hiện phần chạy workflow và lịch sử",
     "workflows": "Workflows",
     "new": "Mới",
     "name": "Tên",

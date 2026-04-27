@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
+import { AlertCircle, Check, RefreshCw } from "lucide-react";
 import { useLang } from "@/lang";
 import { getPublicApiOrigin } from "@/utils/publicApiOrigin";
 import {
@@ -1918,10 +1919,18 @@ export default function WorkflowsPage() {
               >
                 {tr("workflowsUi.backToList", "← All workflows")}
               </button>
-              <div
-                className="rounded-lg border border-red-600 bg-red-100 px-3 py-2"
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedNodeId(null);
+                  setSelectedEdgeId(null);
+                  setConnectFromNodeId(null);
+                  setPendingConnect(null);
+                }}
+                className="w-full rounded-lg border border-red-600 bg-red-100 px-3 py-2 text-left transition hover:bg-red-200/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
                 title={selectedWorkflow.id}
                 aria-current="true"
+                aria-label={tr("workflowsUi.refocusWorkflowPanel", "Show workflow run and history")}
               >
                 <p className="truncate text-xs font-semibold leading-tight text-red-800" title={selectedWorkflow.name}>
                   {selectedWorkflow.name}
@@ -1932,7 +1941,7 @@ export default function WorkflowsPage() {
                 >
                   v{selectedWorkflow.version} - {selectedWorkflow.status}
                 </p>
-              </div>
+              </button>
             </div>
           )}
 
@@ -2518,20 +2527,37 @@ export default function WorkflowsPage() {
                         </span>
                         {runtime && (
                           <span
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                            className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded ${
                               runtime === "running"
                                 ? "bg-blue-100 text-blue-700"
                                 : runtime === "succeeded"
                                   ? "bg-emerald-100 text-emerald-700"
                                   : "bg-rose-100 text-rose-700"
                             }`}
-                            title={runtimeErr || undefined}
+                            title={
+                              runtimeErr ||
+                              (runtime === "running"
+                                ? tr("workflowsUi.statusRunning", "running")
+                                : runtime === "succeeded"
+                                  ? tr("workflowsUi.statusSucceeded", "ok")
+                                  : tr("workflowsUi.statusFailed", "failed"))
+                            }
+                            role="img"
+                            aria-label={
+                              runtime === "running"
+                                ? tr("workflowsUi.statusRunning", "running")
+                                : runtime === "succeeded"
+                                  ? tr("workflowsUi.statusSucceeded", "ok")
+                                  : tr("workflowsUi.statusFailed", "failed")
+                            }
                           >
-                            {runtime === "running"
-                              ? tr("workflowsUi.statusRunning", "running")
-                              : runtime === "succeeded"
-                                ? tr("workflowsUi.statusSucceeded", "ok")
-                                : tr("workflowsUi.statusFailed", "failed")}
+                            {runtime === "running" ? (
+                              <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={2.25} aria-hidden />
+                            ) : runtime === "succeeded" ? (
+                              <Check className="h-3.5 w-3.5 shrink-0 stroke-[2.75]" aria-hidden />
+                            ) : (
+                              <AlertCircle className="h-3.5 w-3.5 shrink-0 stroke-[2.25]" aria-hidden />
+                            )}
                           </span>
                         )}
                         {isEntry && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">{tr("workflowsUi.entry", "entry")}</span>}

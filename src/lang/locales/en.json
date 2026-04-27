@@ -362,6 +362,7 @@
     "saving": "Saving..."
   },
   "workflowsUi": {
+    "refocusWorkflowPanel": "Show workflow run panel and history",
     "workflows": "Workflows",
     "new": "New",
     "name": "Name",
