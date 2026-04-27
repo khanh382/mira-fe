@@ -536,6 +536,7 @@
     "empty": "No messages yet. Start chatting with your agent.",
     "tokens": "tokens",
     "placeholder": "Type your message to the Mira agent...",
+    "placeholderMobile": "Message...",
     "send": "Send",
     "sending": "Sending...",
     "typing": "typing...",
@@ -567,7 +568,8 @@
     "deleteAllConfirm": "Delete ALL your web chat threads? This cannot be undone (soft delete).",
     "deleteThreadError": "Could not delete this thread.",
     "deleteAllError": "Could not delete all threads.",
-    "rehydrateError": "Could not open a new chat session after delete."
+    "rehydrateError": "Could not open a new chat session after delete.",
+    "newline": "New line"
   },
   "users": {
     "title": "Users API Console",

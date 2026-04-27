@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import { useLang } from "@/lang";
+import { getPublicApiOrigin } from "@/utils/publicApiOrigin";
 import {
   createWorkflow as createWorkflowApi,
   deleteWorkflow as deleteWorkflowApi,
@@ -539,15 +540,28 @@ export default function WorkflowsPage() {
   // Subscribe realtime workflow:* events -> tint node in canvas while run is in-flight.
   // Nest WebChatGateway (namespace /webchat) broadcasts to `user:<uid>` room; we only
   // filter by workflowId to avoid cross-workflow noise on the currently visible canvas.
+  //
+  // Socket chỉ khi đã chọn workflow. Origin: NEXT_PUBLIC_API_URL lúc build, hoặc fallback
+  // window.location.origin (cùng host nginx /api + /socket.io). Tab WS có thể trống nếu đang polling.
   useEffect(() => {
     if (!selectedWorkflow?.id) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
-    if (!apiUrl) return;
+    const apiBase = getPublicApiOrigin();
+    if (!apiBase) {
+      console.warn(
+        "[workflows] Không có API origin (thiếu NEXT_PUBLIC_API_URL lúc build và không có window) — Socket.IO tắt.",
+      );
+      return;
+    }
 
-    const socket: Socket = io(`${apiUrl}/webchat`, {
+    const socket: Socket = io(`${apiBase}/webchat`, {
       withCredentials: true,
       transports: ["websocket", "polling"],
     });
+
+    const onConnectError = (err: Error) => {
+      console.warn("[workflows] Socket.IO connect_error:", err?.message || err);
+    };
+    socket.on("connect_error", onConnectError);
 
     const onRunStarted = (p: {
       runId: string;
@@ -609,6 +623,7 @@ export default function WorkflowsPage() {
       socket.off("workflow:node:succeeded", onNodeSucceeded);
       socket.off("workflow:node:failed", onNodeFailed);
       socket.off("workflow:run:finished", onRunFinished);
+      socket.off("connect_error", onConnectError);
       socket.disconnect();
     };
   }, [selectedWorkflow?.id]);

@@ -1,19 +1,17 @@
 import axios from "axios"
+import { getPublicApiOrigin } from "@/utils/publicApiOrigin"
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL;
 const axiosClient = axios.create({
-  baseURL: `${apiUrl}/api/v1`,
+  baseURL: "",
   withCredentials: true,
 })
 
-axiosClient.interceptors.request.use(
-  (config) => {
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  },
-)
+axiosClient.interceptors.request.use((config) => {
+  const origin = getPublicApiOrigin();
+  config.baseURL = origin ? `${origin}/api/v1` : "";
+  return config;
+});
+
 axiosClient.interceptors.response.use(
   (response) => {
     return response
@@ -26,7 +24,7 @@ axiosClient.interceptors.response.use(
       
       try {
         // Gọi API refresh token với withCredentials
-        await axios.post(`${apiUrl}/api/v1/users/refresh-token`, {}, {
+        await axios.post(`${getPublicApiOrigin()}/api/v1/users/refresh-token`, {}, {
           withCredentials: true,
         });   
         // Retry request gốc

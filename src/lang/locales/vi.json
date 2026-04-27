@@ -536,6 +536,7 @@
     "empty": "Chưa có tin nhắn. Hãy bắt đầu chat với agent.",
     "tokens": "tokens",
     "placeholder": "Nhập tin nhắn cho Mira agent...",
+    "placeholderMobile": "Tin nhắn...",
     "send": "Gửi",
     "sending": "Đang gửi...",
     "typing": "đang trả lời...",
@@ -567,7 +568,8 @@
     "deleteAllConfirm": "Xóa TẤT CẢ luồng chat web của bạn? Hành động này không thể hoàn tác (soft delete).",
     "deleteThreadError": "Không thể xóa luồng này.",
     "deleteAllError": "Không thể xóa toàn bộ luồng.",
-    "rehydrateError": "Không thể mở phiên chat mới sau khi xóa."
+    "rehydrateError": "Không thể mở phiên chat mới sau khi xóa.",
+    "newline": "Xuống dòng"
   },
   "users": {
     "title": "Bảng điều khiển Users API",

@@ -1,8 +1,27 @@
 "use client";
 
-import React, { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  FormEvent,
+  KeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useLang } from "@/lang";
-import { Film, FolderX, Image as ImageIcon, Mic, Plus, SendHorizontal, Trash2 } from "lucide-react";
+import {
+  CornerDownLeft,
+  Film,
+  FolderX,
+  Image as ImageIcon,
+  Mic,
+  Plus,
+  SendHorizontal,
+  Trash2,
+} from "lucide-react";
 import { getCurrentUser } from "@/services/AuthService";
 import {
   deleteAllGatewayThreads,
@@ -19,6 +38,40 @@ import {
 
 const THREAD_STORAGE_KEY = "mira_web_thread_id";
 const THREAD_LIST_STORAGE_KEY = "mira_web_thread_list";
+/** Đánh dấu POST /gateway/message đang chờ — dùng khi user rời trang rồi quay lại để hiện typing + poll history. */
+const PENDING_GATEWAY_SEND_KEY = "mira_chat_pending_gateway_send";
+
+type PendingGatewaySend = {
+  threadId: string;
+  since: number;
+};
+
+function readPendingGatewaySend(): PendingGatewaySend | null {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(PENDING_GATEWAY_SEND_KEY);
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as PendingGatewaySend;
+    if (typeof v.since !== "number" || typeof v.threadId !== "string") return null;
+    return v;
+  } catch {
+    sessionStorage.removeItem(PENDING_GATEWAY_SEND_KEY);
+    return null;
+  }
+}
+
+function writePendingGatewaySend(threadId: string): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(
+    PENDING_GATEWAY_SEND_KEY,
+    JSON.stringify({ threadId, since: Date.now() } satisfies PendingGatewaySend),
+  );
+}
+
+function clearPendingGatewaySend(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(PENDING_GATEWAY_SEND_KEY);
+}
 
 const MAX_ATTACHMENTS = 12;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -67,6 +120,21 @@ function filesFromDataTransfer(dt: DataTransfer): File[] {
   return out;
 }
 
+function subscribeNarrowComposer(cb: () => void) {
+  if (typeof window === "undefined") return () => {};
+  const mq = window.matchMedia("(max-width: 639px)");
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
+function getNarrowComposerSnapshot() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches;
+}
+
+function getNarrowComposerServerSnapshot() {
+  return false;
+}
+
 function filesFromClipboard(data: DataTransfer | null): File[] {
   if (!data) return [];
   const out: File[] = [];
@@ -88,10 +156,17 @@ function filesFromClipboard(data: DataTransfer | null): File[] {
 
 export default function ChatPage() {
   const { t } = useLang();
+  const narrowComposer = useSyncExternalStore(
+    subscribeNarrowComposer,
+    getNarrowComposerSnapshot,
+    getNarrowComposerServerSnapshot,
+  );
   const [messages, setMessages] = useState<GatewayMessageItem[]>([]);
   const [input, setInput] = useState("");
   const [threadId, setThreadId] = useState<string>("");
   const [sending, setSending] = useState(false);
+  /** Agent vẫn đang trả lời (request REST còn treo / chưa thấy assistant trên server sau khi quay lại trang). */
+  const [remoteAssistantPending, setRemoteAssistantPending] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [error, setError] = useState("");
   const [statusData, setStatusData] = useState<any>(null);
@@ -100,6 +175,8 @@ export default function ChatPage() {
   const [threadOptions, setThreadOptions] = useState<string[]>([]);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const typingDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingHistoryPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingHistoryPollStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const [showTyping, setShowTyping] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -186,6 +263,77 @@ export default function ChatPage() {
     return out;
   };
 
+  const clearPendingHistoryPollTimers = useCallback(() => {
+    if (pendingHistoryPollRef.current) {
+      clearInterval(pendingHistoryPollRef.current);
+      pendingHistoryPollRef.current = null;
+    }
+    if (pendingHistoryPollStopRef.current) {
+      clearTimeout(pendingHistoryPollStopRef.current);
+      pendingHistoryPollStopRef.current = null;
+    }
+  }, []);
+
+  const stopPendingHistoryPoll = useCallback(() => {
+    clearPendingHistoryPollTimers();
+    setRemoteAssistantPending(false);
+  }, [clearPendingHistoryPollTimers]);
+
+  /**
+   * Sau khi load history: nếu vẫn còn marker “đang gửi / chờ assistant” và tin cuối từ server là user,
+   * coi như POST /gateway/message vẫn có thể đang chạy → hiện typing + poll history.
+   */
+  const beginPendingAssistantReconciliation = useCallback(
+    (resolvedId: string, msgs: GatewayMessageItem[]) => {
+      stopPendingHistoryPoll();
+      const pending = readPendingGatewaySend();
+      if (!pending) return;
+      const maxAgeMs = 15 * 60 * 1000;
+      if (Date.now() - pending.since > maxAgeMs) {
+        clearPendingGatewaySend();
+        return;
+      }
+      const threadOk =
+        pending.threadId === resolvedId || (pending.threadId === "" && Boolean(resolvedId));
+      if (!threadOk) return;
+
+      const last = msgs[msgs.length - 1];
+      if (!last || last.role === "assistant") {
+        if (last?.role === "assistant") clearPendingGatewaySend();
+        return;
+      }
+      if (last.role !== "user") return;
+
+      setRemoteAssistantPending(true);
+      pendingHistoryPollRef.current = setInterval(async () => {
+        try {
+          const res = await getGatewayHistory(50);
+          const rid = res.data.threadId || "";
+          if (rid && rid !== resolvedId) {
+            clearPendingGatewaySend();
+            stopPendingHistoryPoll();
+            return;
+          }
+          const list = res.data.messages || [];
+          setMessages(list);
+          const tail = list[list.length - 1];
+          if (tail?.role === "assistant") {
+            clearPendingGatewaySend();
+            stopPendingHistoryPoll();
+          }
+        } catch {
+          /* tiếp tục poll tới timeout */
+        }
+      }, 2500);
+
+      pendingHistoryPollStopRef.current = setTimeout(() => {
+        clearPendingGatewaySend();
+        stopPendingHistoryPoll();
+      }, 10 * 60 * 1000);
+    },
+    [stopPendingHistoryPoll],
+  );
+
   /** Align server active thread (GET /gateway/history is for active thread only), then load UI. */
   const ensureActiveThread = async (preferredThreadId: string | null) => {
     if (!preferredThreadId) return;
@@ -224,6 +372,7 @@ export default function ChatPage() {
       setThreadOptions(
         persistThreadOptions(mergeThreadIds(serverIds, resolvedId ? [resolvedId] : [], [])),
       );
+      beginPendingAssistantReconciliation(resolvedId, msgs);
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || tr("chat.rehydrateError", "Could not open a new chat session."));
       try {
@@ -255,7 +404,8 @@ export default function ChatPage() {
         getGatewaySkills(),
         getGatewayThreads().catch(() => ({ data: { items: [] as const } })),
       ]);
-      setMessages(historyRes.data.messages || []);
+      const msgs = historyRes.data.messages || [];
+      setMessages(msgs);
       const resolvedId = historyRes.data.threadId || "";
       setThreadId(resolvedId);
       if (resolvedId) {
@@ -268,6 +418,7 @@ export default function ChatPage() {
       );
       setStatusData(statusRes.data);
       setSkillsData(skillsRes.data);
+      beginPendingAssistantReconciliation(resolvedId, msgs);
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || tr("chat.loadError", "Could not load chat history."));
     } finally {
@@ -278,6 +429,12 @@ export default function ChatPage() {
   useEffect(() => {
     void loadHistory();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      clearPendingHistoryPollTimers();
+    };
+  }, [clearPendingHistoryPollTimers]);
 
   useEffect(() => {
     (async () => {
@@ -292,8 +449,11 @@ export default function ChatPage() {
 
   const canSend = useMemo(
     () =>
-      (input.trim().length > 0 || pendingAttachments.length > 0) && !sending && !isRecording,
-    [input, pendingAttachments.length, sending, isRecording],
+      (input.trim().length > 0 || pendingAttachments.length > 0) &&
+      !sending &&
+      !remoteAssistantPending &&
+      !isRecording,
+    [input, pendingAttachments.length, sending, remoteAssistantPending, isRecording],
   );
 
   const removePendingAttachment = (id: string) => {
@@ -383,7 +543,7 @@ export default function ChatPage() {
   }, []);
 
   const toggleVoiceRecording = async () => {
-    if (sending) return;
+    if (sending || remoteAssistantPending) return;
     if (typeof window === "undefined" || typeof MediaRecorder === "undefined") {
       setError(tr("chat.voiceUnsupported", "Voice recording is not supported in this browser."));
       return;
@@ -497,19 +657,29 @@ export default function ChatPage() {
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
 
+    const isNarrow = narrowComposer;
+    const minPx = isNarrow ? 36 : 44;
+    const maxPx = isNarrow ? Math.min(140, Math.round(window.innerHeight * 0.28)) : 220;
+
+    // Mobile + ô trống: placeholder vẫn làm scrollHeight ~ 2 dòng — ép đúng 1 hàng (minPx).
+    if (isNarrow && !input.trim()) {
+      el.style.height = `${minPx}px`;
+      return;
+    }
+
     el.style.height = "0px";
-    const nextHeight = el.scrollHeight;
+    const nextHeight = Math.min(Math.max(el.scrollHeight, minPx), maxPx);
     el.style.height = `${nextHeight}px`;
-  }, [input, pendingAttachments.length]);
+  }, [input, pendingAttachments.length, narrowComposer]);
 
   useEffect(() => {
     if (!messagesContainerRef.current) return;
     messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-  }, [messages, showTyping, pendingAttachments.length]);
+  }, [messages, showTyping, remoteAssistantPending, pendingAttachments.length]);
 
   useEffect(() => {
     return () => {
@@ -540,7 +710,7 @@ export default function ChatPage() {
   const onSend = async (e: FormEvent) => {
     e.preventDefault();
     const text = input.trim();
-    if ((!text && pendingAttachments.length === 0) || sending) return;
+    if ((!text && pendingAttachments.length === 0) || sending || remoteAssistantPending) return;
 
     const snap = [...pendingAttachments];
     let mediaPayload: { mediaUrl?: string; mediaPaths?: string[] } = {};
@@ -601,6 +771,8 @@ export default function ChatPage() {
       Math.floor(1000 + Math.random() * 500),
     );
 
+    writePendingGatewaySend(threadId);
+
     try {
       const response = await sendGatewayMessage({
         content: contentToSend,
@@ -629,6 +801,7 @@ export default function ChatPage() {
       }
       setShowTyping(false);
       setSending(false);
+      clearPendingGatewaySend();
     }
   };
 
@@ -639,6 +812,23 @@ export default function ChatPage() {
         void onSend(e);
       }
     }
+  };
+
+  const insertNewlineAtCursor = () => {
+    const el = inputRef.current;
+    if (!el) {
+      setInput((prev) => `${prev}\n`);
+      return;
+    }
+    const start = el.selectionStart ?? input.length;
+    const end = el.selectionEnd ?? input.length;
+    const next = input.slice(0, start) + "\n" + input.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + 1;
+      el.setSelectionRange(pos, pos);
+    });
   };
 
   const onResetThread = async () => {
@@ -713,10 +903,12 @@ export default function ChatPage() {
       sessionStorage.setItem(THREAD_STORAGE_KEY, nextThreadId);
       upsertThreadOption(nextThreadId);
       const historyRes = await getGatewayHistory(50);
-      setMessages(historyRes.data.messages || []);
+      const switchedMsgs = historyRes.data.messages || [];
+      setMessages(switchedMsgs);
       const resolvedId = historyRes.data.threadId || nextThreadId;
       setThreadId(resolvedId);
       if (resolvedId) sessionStorage.setItem(THREAD_STORAGE_KEY, resolvedId);
+      beginPendingAssistantReconciliation(resolvedId, switchedMsgs);
     } catch (e: any) {
       setError(
         e?.response?.data?.message ||
@@ -914,7 +1106,7 @@ export default function ChatPage() {
               handleFileDrop(e);
             }
           }}
-          className="flex-1 min-h-0 space-y-3 overflow-auto p-2 sm:p-4"
+          className="flex-1 min-h-0 touch-pan-y space-y-2 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2 [-webkit-overflow-scrolling:touch] selection:bg-red-200/80 sm:space-y-3 sm:p-4"
         >
           {loadingHistory && (
             <p className="text-sm text-zinc-500">{tr("chat.loading", "Loading conversation...")}</p>
@@ -934,19 +1126,21 @@ export default function ChatPage() {
           {messages.map((msg) => (
             <div
               key={msg.id}
-              className={`max-w-[min(92%,24rem)] rounded-xl px-3 py-2 text-sm ${
+              className={`w-fit min-w-0 max-w-[min(85dvw,22rem)] shrink select-text rounded-2xl px-3 py-2 text-sm sm:max-w-[min(92%,24rem)] ${
                 msg.role === "user"
                   ? "ml-auto bg-[rgb(173,8,8)] text-white"
-                  : "border border-red-200 bg-red-50 text-zinc-800"
+                  : "mr-auto border border-red-200 bg-red-50 text-zinc-800"
               }`}
             >
-              <div className="mb-1 flex items-center justify-between gap-3 text-[11px] opacity-70">
-                <span className="uppercase tracking-wide">
+              <div className="mb-1 flex min-w-0 items-center justify-between gap-2 text-[11px] opacity-70">
+                <span className="min-w-0 truncate uppercase tracking-wide">
                   {msg.role === "user" ? username : "Agent"}
                 </span>
-                <span>{formatMessageTime(msg.createdAt)}</span>
+                <span className="shrink-0">{formatMessageTime(msg.createdAt)}</span>
               </div>
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+              <p className="select-text whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word]">
+                {msg.content}
+              </p>
               {msg.attachments && msg.attachments.length > 0 && (
                 <div className="mt-2 space-y-2">
                   {msg.attachments.map((att, idx) =>
@@ -956,7 +1150,7 @@ export default function ChatPage() {
                         key={idx}
                         src={att.url}
                         alt=""
-                        className="max-h-52 max-w-full rounded-lg object-contain ring-1 ring-black/10"
+                        className="max-h-[min(13rem,40dvh)] max-w-full rounded-lg object-contain ring-1 ring-black/10"
                       />
                     ) : att.kind === "video" ? (
                       <video
@@ -979,8 +1173,8 @@ export default function ChatPage() {
             </div>
           ))}
 
-          {sending && showTyping && (
-            <div className="max-w-[min(92%,24rem)] rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-zinc-800">
+          {((sending && showTyping) || remoteAssistantPending) && (
+            <div className="mr-auto w-fit min-w-0 max-w-[min(85dvw,22rem)] rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-zinc-800 sm:max-w-[min(92%,24rem)]">
               <div className="mb-1 flex items-center justify-between gap-3 text-[11px] opacity-70">
                 <span className="uppercase tracking-wide">Agent</span>
                 <span>{tr("chat.typing", "typing...")}</span>
@@ -994,7 +1188,7 @@ export default function ChatPage() {
           )}
         </div>
 
-        <form onSubmit={onSend} className="shrink-0 border-t border-red-200 p-2 sm:p-4">
+        <form onSubmit={onSend} className="shrink-0 touch-pan-y border-t border-red-200 p-1.5 sm:p-4">
           {error && (
             <p className="mb-3 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">
               {error}
@@ -1050,18 +1244,18 @@ export default function ChatPage() {
               </div>
             </div>
           )}
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-1.5 sm:gap-2">
             <div className="relative shrink-0 pb-0.5" ref={attachMenuRef}>
               <button
                 type="button"
-                disabled={sending || isRecording}
+                disabled={sending || remoteAssistantPending || isRecording}
                 onClick={() => setAttachMenuOpen((o) => !o)}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-red-300 bg-white text-red-700 outline-none transition hover:bg-red-50 focus:border-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-red-300 bg-white text-red-700 outline-none transition hover:bg-red-50 focus:border-red-400 disabled:cursor-not-allowed disabled:opacity-50 sm:h-11 sm:w-11"
                 aria-label={tr("chat.addAttachment", "Attach")}
                 aria-expanded={attachMenuOpen}
                 aria-haspopup="menu"
               >
-                <Plus size={20} strokeWidth={2.25} />
+                <Plus size={18} strokeWidth={2.25} className="sm:size-5" />
               </button>
               {attachMenuOpen && (
                 <div
@@ -1113,7 +1307,7 @@ export default function ChatPage() {
             </div>
             <button
               type="button"
-              disabled={sending}
+              disabled={sending || remoteAssistantPending}
               onClick={() => void toggleVoiceRecording()}
               title={
                 isRecording
@@ -1126,18 +1320,20 @@ export default function ChatPage() {
                   ? tr("chat.voiceStopHint", "Tap again to finish and attach")
                   : tr("chat.voiceRecordHint", "Tap to record voice")
               }
-              className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border outline-none transition focus:border-red-400 disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border outline-none transition focus:border-red-400 disabled:cursor-not-allowed disabled:opacity-50 sm:h-11 sm:w-11 ${
                 isRecording
                   ? "animate-pulse border-red-500 bg-red-600 text-white shadow-md"
                   : "border-red-300 bg-white text-red-700 hover:bg-red-50"
               }`}
             >
-              <Mic size={20} strokeWidth={2.25} />
+              <Mic size={18} strokeWidth={2.25} className="sm:size-5" />
             </button>
             <div className="relative min-w-0 flex-1">
               <textarea
                 ref={inputRef}
                 rows={1}
+                enterKeyHint="send"
+                inputMode="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onInputKeyDown}
@@ -1163,17 +1359,32 @@ export default function ChatPage() {
                     }
                   }
                 }}
-                placeholder={tr("chat.placeholder", "Type your message to the Mira agent...")}
-                className="min-h-11 w-full resize-none overflow-hidden rounded-xl border border-red-300 bg-white px-4 py-3 pr-14 font-sans text-sm leading-normal tracking-tight text-zinc-800 outline-none focus:border-red-300 focus:ring-0"
+                placeholder={
+                  narrowComposer
+                    ? tr("chat.placeholderMobile", "Message...")
+                    : tr("chat.placeholder", "Type your message to the Mira agent...")
+                }
+                className="max-h-[28dvh] min-h-9 w-full resize-none overflow-y-auto rounded-2xl border border-red-300 bg-white py-2 pl-3 pr-[4.25rem] font-sans text-sm leading-snug tracking-tight text-zinc-800 outline-none focus:border-red-300 focus:ring-0 sm:max-h-[40dvh] sm:min-h-11 sm:py-3 sm:pl-4 sm:pr-14 sm:leading-normal"
               />
-              <button
-                type="submit"
-                disabled={!canSend}
-                className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 appearance-none items-center justify-center rounded-full border border-transparent bg-zinc-200 text-zinc-600 outline-none ring-0 transition hover:bg-zinc-300 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
-                aria-label={tr("chat.send", "Send")}
-              >
-                <SendHorizontal size={15} />
-              </button>
+              <div className="absolute bottom-1.5 right-1.5 z-[1] flex items-center gap-1 sm:bottom-auto sm:right-2 sm:top-1/2 sm:-translate-y-1/2">
+                <button
+                  type="button"
+                  onClick={insertNewlineAtCursor}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 shadow-sm hover:bg-zinc-50 sm:hidden"
+                  aria-label={tr("chat.newline", "New line")}
+                  title={tr("chat.newline", "New line")}
+                >
+                  <CornerDownLeft size={16} strokeWidth={2.25} />
+                </button>
+                <button
+                  type="submit"
+                  disabled={!canSend}
+                  className="inline-flex h-8 w-8 appearance-none items-center justify-center rounded-full border border-transparent bg-zinc-200 text-zinc-600 outline-none ring-0 transition hover:bg-zinc-300 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+                  aria-label={tr("chat.send", "Send")}
+                >
+                  <SendHorizontal size={15} />
+                </button>
+              </div>
             </div>
           </div>
         </form>
