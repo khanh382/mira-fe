@@ -80,6 +80,7 @@ type RunNodeLog = {
 type RunModel = {
   id: string;
   status: RunStatus;
+  error: string | null;
   finalOutput: string;
   logs: RunNodeLog[];
 };
@@ -1471,6 +1472,7 @@ export default function WorkflowsPage() {
     setRun({
       id: item.workflowRunId || item.id,
       status: (item.status as RunStatus),
+      error: item.error || null,
       finalOutput: outputText || JSON.stringify(item, null, 2),
       logs: [
         {
@@ -1551,6 +1553,7 @@ export default function WorkflowsPage() {
     setRun({
       id: runId,
       status: (String(runRaw.status || "running") as RunStatus),
+      error: runRaw.error == null ? null : String(runRaw.error),
       finalOutput: JSON.stringify(detail, null, 2),
       logs,
     });
@@ -2942,6 +2945,36 @@ export default function WorkflowsPage() {
             )}
             {run && (
               <div className="space-y-2">
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded border border-red-200 bg-white text-zinc-500 hover:bg-red-50 hover:text-zinc-700"
+                    title={tr("workflowsUi.copy", "Copy")}
+                    aria-label={tr("workflowsUi.copy", "Copy")}
+                    onClick={() => {
+                      if (typeof navigator !== "undefined" && navigator.clipboard) {
+                        const logsText = run.logs
+                          .map(
+                            (log, idx) =>
+                              [
+                                `#${idx + 1}`,
+                                `${tr("workflowsUi.duration", "duration")}: ${log.durationMs}ms`,
+                                `${tr("workflowsUi.promptSent", "Prompt sent")}: ${log.resolvedPrompt || "-"}`,
+                                `${tr("workflowsUi.resultReturned", "Result returned")}: ${log.resolvedOutput || "-"}`,
+                              ].join("\n"),
+                          )
+                          .join("\n\n");
+                        const text = `${logsText}\n\n${tr("workflowsUi.workflowError", "Workflow error")}: ${run.error || "-"}`;
+                        void navigator.clipboard.writeText(text);
+                      }
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none">
+                      <path d="M9 9h11v12H9V9Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                      <path d="M4 15V4h11" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
                 <div className="max-h-36 space-y-1 overflow-auto">
                   {run.logs.map((log) => (
                     <div key={log.id} className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px]">
@@ -2954,6 +2987,12 @@ export default function WorkflowsPage() {
                       </p>
                     </div>
                   ))}
+                </div>
+                <div className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px]">
+                  <p className="font-semibold text-red-700">
+                    {tr("workflowsUi.workflowError", "Workflow error")}
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap text-zinc-700">{run.error || "-"}</p>
                 </div>
               </div>
             )}

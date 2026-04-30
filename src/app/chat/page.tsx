@@ -37,7 +37,6 @@ import {
 } from "@/services/GatewayService";
 
 const THREAD_STORAGE_KEY = "mira_web_thread_id";
-const THREAD_LIST_STORAGE_KEY = "mira_web_thread_list";
 /** Đánh dấu POST /gateway/message đang chờ — dùng khi user rời trang rồi quay lại để hiện typing + poll history. */
 const PENDING_GATEWAY_SEND_KEY = "mira_chat_pending_gateway_send";
 
@@ -135,6 +134,22 @@ function getNarrowComposerServerSnapshot() {
   return false;
 }
 
+/** Trùng `lg:hidden` của panel Info — mobile / tablet khi sidebar ẩn. */
+function subscribeLgDown(cb: () => void) {
+  if (typeof window === "undefined") return () => {};
+  const mq = window.matchMedia("(max-width: 1023px)");
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
+function getLgDownSnapshot() {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
+}
+
+function getLgDownServerSnapshot() {
+  return false;
+}
+
 function filesFromClipboard(data: DataTransfer | null): File[] {
   if (!data) return [];
   const out: File[] = [];
@@ -161,6 +176,7 @@ export default function ChatPage() {
     getNarrowComposerSnapshot,
     getNarrowComposerServerSnapshot,
   );
+  const isLgDown = useSyncExternalStore(subscribeLgDown, getLgDownSnapshot, getLgDownServerSnapshot);
   const [messages, setMessages] = useState<GatewayMessageItem[]>([]);
   const [input, setInput] = useState("");
   const [threadId, setThreadId] = useState<string>("");
@@ -226,24 +242,9 @@ export default function ChatPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [attachMenuOpen]);
 
-  useEffect(() => {
-    const storedThreadList = localStorage.getItem(THREAD_LIST_STORAGE_KEY);
-    if (storedThreadList) {
-      try {
-        const parsed = JSON.parse(storedThreadList) as string[];
-        if (Array.isArray(parsed)) {
-          setThreadOptions(parsed.filter((item) => typeof item === "string"));
-        }
-      } catch {
-        setThreadOptions([]);
-      }
-    }
-  }, []);
-
+  /** Danh sách thread trong dropdown chỉ đồng bộ từ API — không đọc localStorage (tránh hiện lại phiên đã xóa). */
   const persistThreadOptions = (ids: string[]) => {
-    const next = [...new Set(ids.filter(Boolean))].slice(0, 50);
-    localStorage.setItem(THREAD_LIST_STORAGE_KEY, JSON.stringify(next));
-    return next;
+    return [...new Set(ids.filter(Boolean))].slice(0, 50);
   };
 
   const upsertThreadOption = (value: string) => {
@@ -413,9 +414,7 @@ export default function ChatPage() {
       }
       const serverIds =
         threadsRes.data?.items?.map((it) => it.threadId).filter((id): id is string => Boolean(id)) ?? [];
-      setThreadOptions((prev) =>
-        persistThreadOptions(mergeThreadIds(serverIds, [resolvedId], prev)),
-      );
+      setThreadOptions(persistThreadOptions(mergeThreadIds(serverIds, resolvedId ? [resolvedId] : [])));
       setStatusData(statusRes.data);
       setSkillsData(skillsRes.data);
       beginPendingAssistantReconciliation(resolvedId, msgs);
@@ -985,15 +984,38 @@ export default function ChatPage() {
               const name = typeof skill === "string" ? skill : skill.name || skill.id || "Skill";
               const code = typeof skill === "object" && skill.code ? skill.code : name;
               const desc = typeof skill === "object" && skill.description ? skill.description : undefined;
+              const command = `/${code} `;
+              const chipClass =
+                "inline-flex items-center rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 shadow-sm transition-colors hover:bg-red-50 touch-manipulation";
+
+              if (isLgDown) {
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    title={desc}
+                    aria-label={tr("chat.insertSkillCommand", "Insert skill command into message")}
+                    onClick={() => {
+                      setInput((prev) => prev + (prev.endsWith(" ") || prev === "" ? "" : " ") + command);
+                      setInfoOpen(false);
+                      queueMicrotask(() => inputRef.current?.focus());
+                    }}
+                    className={`${chipClass} cursor-pointer`}
+                  >
+                    {name}
+                  </button>
+                );
+              }
+
               return (
                 <span
                   key={idx}
                   draggable
                   title={desc}
                   onDragStart={(e) => {
-                    e.dataTransfer.setData("text/plain", `/${code} `);
+                    e.dataTransfer.setData("text/plain", command);
                   }}
-                  className="inline-flex cursor-grab active:cursor-grabbing items-center rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 shadow-sm transition-colors hover:bg-red-50"
+                  className={`${chipClass} cursor-grab active:cursor-grabbing`}
                 >
                   {name}
                 </span>

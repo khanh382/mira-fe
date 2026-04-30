@@ -261,16 +261,15 @@ export default function WebsitesPage() {
         </div>
 
         <div className="w-full overflow-x-auto rounded-lg border border-red-200 shadow-sm">
-          <table className="w-full min-w-[920px] table-auto divide-y divide-red-200 text-sm">
+          <table className="w-full min-w-[900px] table-auto divide-y divide-red-200 text-sm">
             <thead className="bg-red-50 text-zinc-700">
               <tr>
                 <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.id", "ID")}</th>
+                <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.code", "Code")}</th>
                 <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.domain", "Domain")}</th>
                 <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.authType", "Auth type")}</th>
                 <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.headerName", "Header name")}</th>
                 <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.username", "Username")}</th>
-                <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.hasToken", "Token")}</th>
-                <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.note", "Note")}</th>
                 <th className="whitespace-nowrap px-3 py-2 text-left font-semibold">{tr("websites.updatedAt", "Updated at")}</th>
                 <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">{tr("websites.actions", "Actions")}</th>
               </tr>
@@ -278,13 +277,13 @@ export default function WebsitesPage() {
             <tbody className="divide-y divide-red-100 bg-white">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-3 py-6 text-center text-zinc-500">
+                  <td colSpan={8} className="px-3 py-6 text-center text-zinc-500">
                     {tr("websites.loading", "Loading websites...")}
                   </td>
                 </tr>
               ) : sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-3 py-6 text-center text-zinc-500">
+                  <td colSpan={8} className="px-3 py-6 text-center text-zinc-500">
                     {tr("websites.empty", "No websites yet.")}
                   </td>
                 </tr>
@@ -292,6 +291,7 @@ export default function WebsitesPage() {
                 sorted.map((item) => (
                   <tr key={item.id} className="hover:bg-red-50/40">
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-zinc-600">{item.id}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-zinc-700">{item.code || "-"}</td>
                     <td className="whitespace-nowrap px-3 py-2 font-medium text-zinc-800">{item.domain}</td>
                     <td className="whitespace-nowrap px-3 py-2">
                       <span className="inline-flex rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
@@ -300,22 +300,6 @@ export default function WebsitesPage() {
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-zinc-700">{item.headerName || "-"}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-zinc-700">{item.username || "-"}</td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      {item.hasToken ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                          {tr("websites.hasTokenYes", "Saved")}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-zinc-300 bg-zinc-50 px-2 py-0.5 text-xs font-medium text-zinc-600">
-                          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
-                          {tr("websites.hasTokenNo", "Missing")}
-                        </span>
-                      )}
-                    </td>
-                    <td className="max-w-[240px] truncate px-3 py-2 text-zinc-600" title={item.note || ""}>
-                      {item.note || "-"}
-                    </td>
                     <td className="whitespace-nowrap px-3 py-2 text-xs text-zinc-500">{formatDate(item.updatedAt)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       <div className="inline-flex items-center gap-2">
@@ -360,7 +344,7 @@ export default function WebsitesPage() {
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[rgb(173,8,8)]">
                 {isEditing
-                  ? `${tr("websites.update", "Update website")} #${editing?.id}`
+                  ? `${tr("websites.update", "Update website")} #${editing?.id} (${editing?.code || "-"})`
                   : tr("websites.create", "Add website")}
               </h3>
               <button
@@ -443,7 +427,7 @@ export default function WebsitesPage() {
 
               <div className="md:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-zinc-600">
-                  {tr("websites.token", "Token")}
+                  {tr("websites.token", "Token / Password")}
                 </label>
                 <input
                   type="password"

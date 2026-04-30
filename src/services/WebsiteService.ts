@@ -5,6 +5,7 @@ export type WebsiteAuthType = "api_key" | "bearer" | "basic";
 
 export interface MyWebsite {
   id: number;
+  code: string;
   domain: string;
   authType: WebsiteAuthType;
   headerName: string | null;
