@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { io, Socket } from "socket.io-client";
 import { AlertCircle, Check, RefreshCw } from "lucide-react";
 import { useLang } from "@/lang";
+import { isPageReload, notify } from "@/utils/notify";
 import { getPublicApiOrigin } from "@/utils/publicApiOrigin";
 import {
   createWorkflow as createWorkflowApi,
@@ -362,6 +364,7 @@ const isValidWorkflowBackupJson = (value: unknown): value is Record<string, unkn
 };
 
 export default function WorkflowsPage() {
+  const searchParams = useSearchParams();
   const { t } = useLang();
   const tr = (key: string, fallback: string) => {
     const value = t(key);
@@ -753,6 +756,14 @@ export default function WorkflowsPage() {
       ignore = true;
     };
   }, []);
+
+  useEffect(() => {
+    const wf = searchParams.get("wf");
+    if (!wf || workflows.length === 0) return;
+    if (workflows.some((w) => w.id === wf)) {
+      setSelectedWorkflowId(wf);
+    }
+  }, [searchParams, workflows]);
 
   useEffect(() => {
     let ignore = false;
@@ -1890,7 +1901,7 @@ export default function WorkflowsPage() {
           {loadError && <p className="mb-2 text-xs text-red-700">{loadError}</p>}
 
           {!selectedWorkflow ? (
-            <div className="mb-3 max-h-60 space-y-2 overflow-auto">
+            <div className="mb-3 space-y-2 overflow-auto">
               {workflows.map((wf) => (
                 <button
                   key={wf.id}

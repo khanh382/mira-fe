@@ -27,6 +27,7 @@ import {
   deleteAllGatewayThreads,
   deleteCurrentGatewayThread,
   GatewayMessageItem,
+  type GatewayThreadListItem,
   getGatewayHistory,
   getGatewaySkills,
   getGatewayStatus,
@@ -35,6 +36,7 @@ import {
   sendGatewayMessage,
   switchGatewayThread,
 } from "@/services/GatewayService";
+import { notify } from "@/utils/notify";
 
 const THREAD_STORAGE_KEY = "mira_web_thread_id";
 /** Đánh dấu POST /gateway/message đang chờ — dùng khi user rời trang rồi quay lại để hiện typing + poll history. */
@@ -150,6 +152,25 @@ function getLgDownServerSnapshot() {
   return false;
 }
 
+function threadRecencyTs(it: GatewayThreadListItem): number {
+  const fromUpdated = it.updatedAt ? Date.parse(it.updatedAt) : NaN;
+  if (Number.isFinite(fromUpdated)) return fromUpdated;
+  const fromCreated = it.createdAt ? Date.parse(it.createdAt) : NaN;
+  if (Number.isFinite(fromCreated)) return fromCreated;
+  return 0;
+}
+
+/** After delete: prefer server-flagged active thread, else newest by updatedAt/createdAt. */
+function pickLatestRemainingThread(items: GatewayThreadListItem[]): string | null {
+  if (!items.length) return null;
+  const flagged = items.find((it) => it.isActive === true && it.threadId?.trim());
+  const fromFlag = flagged?.threadId?.trim();
+  if (fromFlag) return fromFlag;
+  const sorted = [...items].sort((a, b) => threadRecencyTs(b) - threadRecencyTs(a));
+  const id = sorted[0]?.threadId?.trim();
+  return id ? id : null;
+}
+
 function filesFromClipboard(data: DataTransfer | null): File[] {
   if (!data) return [];
   const out: File[] = [];
@@ -209,11 +230,18 @@ export default function ChatPage() {
   const discardVoiceRef = useRef(false);
   const voiceBusyRef = useRef(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [deleteConfirmKind, setDeleteConfirmKind] = useState<null | "thread" | "all">(null);
 
   const tr = (key: string, fallback: string) => {
     const value = t(key);
     return value === key ? fallback : value;
   };
+
+  useEffect(() => {
+    if (!error) return;
+    notify.error(error);
+    setError("");
+  }, [error]);
 
   pendingAttachmentsRef.current = pendingAttachments;
 
@@ -241,6 +269,15 @@ export default function ChatPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [attachMenuOpen]);
+
+  useEffect(() => {
+    if (!deleteConfirmKind) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setDeleteConfirmKind(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteConfirmKind]);
 
   /** Danh sách thread trong dropdown chỉ đồng bộ từ API — không đọc localStorage (tránh hiện lại phiên đã xóa). */
   const persistThreadOptions = (ids: string[]) => {
@@ -345,7 +382,7 @@ export default function ChatPage() {
     }
   };
 
-  /** After soft-deleting thread(s): clear stored id, resolve new active thread (history or reset). */
+  /** After soft-deleting thread(s): switch to newest remaining thread, or reset only when none left. */
   const rehydrateAfterThreadDeletion = async () => {
     sessionStorage.removeItem(THREAD_STORAGE_KEY);
     setPendingAttachments((prev) => {
@@ -354,26 +391,39 @@ export default function ChatPage() {
     });
     setInput("");
     try {
-      const [historyRes, threadsRes] = await Promise.all([
-        getGatewayHistory(50),
-        getGatewayThreads().catch(() => ({ data: { items: [] as const } })),
-      ]);
-      let resolvedId = historyRes.data.threadId || "";
-      let msgs = historyRes.data.messages || [];
-      if (!resolvedId) {
-        const resetRes = await resetGatewayThread("rehydrate_after_thread_delete");
-        resolvedId = resetRes.data.threadId;
-        msgs = [];
+      const threadsRes = await getGatewayThreads().catch(() => ({ data: { items: [] as GatewayThreadListItem[] } }));
+      const rawItems = threadsRes.data?.items ?? [];
+
+      const applyThreadState = (resolvedId: string, msgs: GatewayMessageItem[]) => {
+        setMessages(msgs);
+        setThreadId(resolvedId);
+        if (resolvedId) sessionStorage.setItem(THREAD_STORAGE_KEY, resolvedId);
+        const serverIds = rawItems.map((it) => it.threadId).filter((id): id is string => Boolean(id));
+        setThreadOptions(
+          persistThreadOptions(mergeThreadIds(serverIds, resolvedId ? [resolvedId] : [], [])),
+        );
+        beginPendingAssistantReconciliation(resolvedId, msgs);
+      };
+
+      if (rawItems.length === 0) {
+        const resetRes = await resetGatewayThread("rehydrate_after_all_threads_deleted");
+        applyThreadState(resetRes.data.threadId, []);
+        return;
       }
-      setMessages(msgs);
-      setThreadId(resolvedId);
-      if (resolvedId) sessionStorage.setItem(THREAD_STORAGE_KEY, resolvedId);
-      const serverIds =
-        threadsRes.data?.items?.map((it) => it.threadId).filter((id): id is string => Boolean(id)) ?? [];
-      setThreadOptions(
-        persistThreadOptions(mergeThreadIds(serverIds, resolvedId ? [resolvedId] : [], [])),
-      );
-      beginPendingAssistantReconciliation(resolvedId, msgs);
+
+      const nextThreadId = pickLatestRemainingThread(rawItems);
+      if (!nextThreadId) {
+        const resetRes = await resetGatewayThread("rehydrate_after_thread_delete_no_id");
+        applyThreadState(resetRes.data.threadId, []);
+        return;
+      }
+
+      await switchGatewayThread(nextThreadId);
+      sessionStorage.setItem(THREAD_STORAGE_KEY, nextThreadId);
+      const historyRes = await getGatewayHistory(50);
+      const resolvedId = historyRes.data.threadId || nextThreadId;
+      const msgs = historyRes.data.messages || [];
+      applyThreadState(resolvedId, msgs);
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || tr("chat.rehydrateError", "Could not open a new chat session."));
       try {
@@ -844,11 +894,8 @@ export default function ChatPage() {
     }
   };
 
-  const onDeleteCurrentThread = async () => {
+  const runDeleteCurrentThread = async () => {
     if (!threadId || loadingHistory) return;
-    if (!window.confirm(tr("chat.deleteCurrentConfirm", "Delete this chat thread? It will be removed from your list."))) {
-      return;
-    }
     setError("");
     setLoadingHistory(true);
     try {
@@ -863,15 +910,8 @@ export default function ChatPage() {
     }
   };
 
-  const onDeleteAllThreads = async () => {
+  const runDeleteAllThreads = async () => {
     if (loadingHistory) return;
-    if (
-      !window.confirm(
-        tr("chat.deleteAllConfirm", "Delete ALL your web chat threads? This cannot be undone."),
-      )
-    ) {
-      return;
-    }
     setError("");
     setLoadingHistory(true);
     try {
@@ -884,6 +924,23 @@ export default function ChatPage() {
     } finally {
       setLoadingHistory(false);
     }
+  };
+
+  const requestDeleteCurrentThread = () => {
+    if (!threadId || loadingHistory) return;
+    setDeleteConfirmKind("thread");
+  };
+
+  const requestDeleteAllThreads = () => {
+    if (loadingHistory) return;
+    setDeleteConfirmKind("all");
+  };
+
+  const onConfirmDeleteDialog = () => {
+    const kind = deleteConfirmKind;
+    setDeleteConfirmKind(null);
+    if (kind === "thread") void runDeleteCurrentThread();
+    else if (kind === "all") void runDeleteAllThreads();
   };
 
   const formatMessageTime = (value?: string) => {
@@ -1072,7 +1129,7 @@ export default function ChatPage() {
             </select>
             <button
               type="button"
-              onClick={() => void onDeleteCurrentThread()}
+              onClick={requestDeleteCurrentThread}
               disabled={!threadId || loadingHistory}
               className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={tr("chat.deleteCurrentThread", "Delete this thread")}
@@ -1082,7 +1139,7 @@ export default function ChatPage() {
             </button>
             <button
               type="button"
-              onClick={() => void onDeleteAllThreads()}
+              onClick={requestDeleteAllThreads}
               disabled={loadingHistory}
               className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-300 bg-white px-2 py-2 text-sm text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={tr("chat.deleteAllThreads", "Delete all threads")}
@@ -1211,11 +1268,6 @@ export default function ChatPage() {
         </div>
 
         <form onSubmit={onSend} className="shrink-0 touch-pan-y border-t border-red-200 p-1.5 sm:p-4">
-          {error && (
-            <p className="mb-3 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">
-              {error}
-            </p>
-          )}
           {isRecording && (
             <p className="mb-2 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800">
               <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-600" aria-hidden />
@@ -1450,6 +1502,58 @@ export default function ChatPage() {
           </div>
         </div>
       )}
+
+      {deleteConfirmKind ? (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" role="presentation">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"
+            aria-label={tr("chat.dialogCloseOverlay", "Dismiss")}
+            onClick={() => setDeleteConfirmKind(null)}
+          />
+          <div
+            className="relative w-full max-w-md rounded-2xl border border-red-200 bg-white p-5 shadow-xl"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="chat-delete-confirm-title"
+            aria-describedby="chat-delete-confirm-desc"
+          >
+            <h2 id="chat-delete-confirm-title" className="text-lg font-semibold text-[rgb(173,8,8)]">
+              {deleteConfirmKind === "thread"
+                ? tr("chat.deleteCurrentThread", "Delete this thread")
+                : tr("chat.deleteAllThreads", "Delete all web threads")}
+            </h2>
+            <p id="chat-delete-confirm-desc" className="mt-3 text-sm leading-relaxed text-zinc-600">
+              {deleteConfirmKind === "thread"
+                ? tr(
+                    "chat.deleteCurrentConfirm",
+                    "Delete the active web chat thread? It will disappear from your list (soft delete).",
+                  )
+                : tr(
+                    "chat.deleteAllConfirm",
+                    "Delete ALL your web chat threads? This cannot be undone (soft delete).",
+                  )}
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmKind(null)}
+                className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                {tr("chat.dialogCancel", "Cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={onConfirmDeleteDialog}
+                disabled={loadingHistory}
+                className="rounded-lg bg-[rgb(173,8,8)] px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {tr("chat.dialogConfirmDelete", "Delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

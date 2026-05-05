@@ -18,6 +18,7 @@ import {
   type UsageEventsResponse,
   type UsageSummary,
 } from "@/services/ConnectWebhookService";
+import { notify } from "@/utils/notify";
 
 /** Public HTTP API paths (after `NEXT_PUBLIC_API_URL` host, include global `/api/v1` prefix). */
 const CW_PUBLIC_CHAT_PATH = "/api/v1/connect-webhooks/v1/chat";
@@ -72,8 +73,6 @@ export default function WebhooksPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
   const [items, setItems] = useState<ConnectWebhookRow[]>([]);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
 
   const [showCreate, setShowCreate] = useState(false);
   const [createDomain, setCreateDomain] = useState("");
@@ -174,7 +173,6 @@ export default function WebhooksPage() {
 
   const reloadKeys = useCallback(async () => {
     setLoading(true);
-    setError("");
     try {
       const list = await listConnectWebhookKeys();
       setItems(list);
@@ -185,7 +183,7 @@ export default function WebhooksPage() {
           ? (e as { response?: { data?: { message?: string } } }).response?.data?.message
           : undefined;
       const fb = tRef.current("webhooks.loadError");
-      setError(msg || (fb === "webhooks.loadError" ? "Could not load webhook keys." : fb));
+      notify.error(msg || (fb === "webhooks.loadError" ? "Could not load webhook keys." : fb));
     } finally {
       setLoading(false);
       setHasListed(true);
@@ -263,21 +261,19 @@ export default function WebhooksPage() {
   const copyText = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setMessage(tr("webhooks.copied", "Copied to clipboard."));
+      notify.success(tr("webhooks.copied", "Copied to clipboard."));
     } catch {
-      setError(tr("webhooks.copyFailed", "Could not copy."));
+      notify.error(tr("webhooks.copyFailed", "Could not copy."));
     }
   };
 
   const onCreate = async () => {
     const d = createDomain.trim();
     if (!d) {
-      setError(tr("webhooks.validationDomain", "Please enter a domain."));
+      notify.error(tr("webhooks.validationDomain", "Please enter a domain."));
       return;
     }
     setSaving(true);
-    setError("");
-    setMessage("");
     try {
       const res = await createConnectWebhookKey(d);
       setItems((prev) => {
@@ -290,13 +286,13 @@ export default function WebhooksPage() {
         title: tr("webhooks.secretTitleCreate", "API key created"),
         apiKey: res.apiKey,
       });
-      setMessage(tr("webhooks.created", "Webhook key created. Store the secret safely — it will not be shown again."));
+      notify.success(tr("webhooks.created", "Webhook key created. Store the secret safely — it will not be shown again."));
     } catch (e: unknown) {
       const msg =
         typeof e === "object" && e !== null && "response" in e
           ? (e as { response?: { data?: { message?: string } } }).response?.data?.message
           : undefined;
-      setError(msg || tr("webhooks.createError", "Could not create webhook key."));
+      notify.error(msg || tr("webhooks.createError", "Could not create webhook key."));
     } finally {
       setSaving(false);
     }
@@ -306,8 +302,6 @@ export default function WebhooksPage() {
     setConfigureRow(row);
     setCfgSubdomains(row.cwUseSubdomains);
     setCfgStatus(row.cwStatus);
-    setError("");
-    setMessage("");
   };
 
   const onSaveConfigure = async () => {
@@ -320,19 +314,17 @@ export default function WebhooksPage() {
       return;
     }
     setSaving(true);
-    setError("");
-    setMessage("");
     try {
       const updated = await patchConnectWebhookKey(configureRow.cwId, payload);
       setItems((prev) => prev.map((x) => (x.cwId === updated.cwId ? updated : x)));
       setConfigureRow(null);
-      setMessage(tr("webhooks.updated", "Settings updated."));
+      notify.success(tr("webhooks.updated", "Settings updated."));
     } catch (e: unknown) {
       const msg =
         typeof e === "object" && e !== null && "response" in e
           ? (e as { response?: { data?: { message?: string } } }).response?.data?.message
           : undefined;
-      setError(msg || tr("webhooks.updateError", "Could not update settings."));
+      notify.error(msg || tr("webhooks.updateError", "Could not update settings."));
     } finally {
       setSaving(false);
     }
@@ -350,8 +342,6 @@ export default function WebhooksPage() {
       return;
     }
     setRefreshingId(row.cwId);
-    setError("");
-    setMessage("");
     try {
       const res = await refreshConnectWebhookKey(row.cwId);
       setItems((prev) => prev.map((x) => (x.cwId === res.row.cwId ? res.row : x)));
@@ -359,13 +349,13 @@ export default function WebhooksPage() {
         title: tr("webhooks.secretTitleRotate", "New API key"),
         apiKey: res.apiKey,
       });
-      setMessage(tr("webhooks.rotated", "Key rotated. Save the new secret — it will not be shown again."));
+      notify.success(tr("webhooks.rotated", "Key rotated. Save the new secret — it will not be shown again."));
     } catch (e: unknown) {
       const msg =
         typeof e === "object" && e !== null && "response" in e
           ? (e as { response?: { data?: { message?: string } } }).response?.data?.message
           : undefined;
-      setError(msg || tr("webhooks.rotateError", "Could not rotate key."));
+      notify.error(msg || tr("webhooks.rotateError", "Could not rotate key."));
     } finally {
       setRefreshingId(null);
     }
@@ -376,18 +366,16 @@ export default function WebhooksPage() {
       return;
     }
     setDeletingId(row.cwId);
-    setError("");
-    setMessage("");
     try {
       await deleteConnectWebhookKey(row.cwId);
       setItems((prev) => prev.filter((x) => x.cwId !== row.cwId));
-      setMessage(tr("webhooks.deleted", "API key deleted."));
+      notify.success(tr("webhooks.deleted", "API key deleted."));
     } catch (e: unknown) {
       const msg =
         typeof e === "object" && e !== null && "response" in e
           ? (e as { response?: { data?: { message?: string } } }).response?.data?.message
           : undefined;
-      setError(msg || tr("webhooks.deleteError", "Could not delete key."));
+      notify.error(msg || tr("webhooks.deleteError", "Could not delete key."));
     } finally {
       setDeletingId(null);
     }
@@ -625,11 +613,6 @@ export default function WebhooksPage() {
         </div>
       </div>
 
-      {message && (
-        <p className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-700">{message}</p>
-      )}
-      {error && <p className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">{error}</p>}
-
       <section className="w-full rounded-xl border border-red-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-[rgb(173,8,8)]">{tr("webhooks.list", "API keys by domain")}</h2>
@@ -646,7 +629,6 @@ export default function WebhooksPage() {
               onClick={() => {
                 setCreateDomain("");
                 setShowCreate(true);
-                setError("");
               }}
               className="rounded bg-[rgb(173,8,8)] px-3 py-2 text-sm text-white hover:bg-[rgb(150,7,7)]"
             >

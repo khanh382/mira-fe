@@ -6,6 +6,7 @@ import { createUser, updateUser } from "@/services/AuthService";
 import axiosClient from "@/utils/axiosClient";
 import { useLang } from "@/lang";
 import { useAuth } from "@/hooks/useAuth";
+import { notify } from "@/utils/notify";
 
 type ManagedUser = {
   uid: number;
@@ -20,8 +21,6 @@ export default function UserManagementPage() {
   const router = useRouter();
   const { user, isChecking } = useAuth();
   const { t } = useLang();
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -43,7 +42,6 @@ export default function UserManagementPage() {
 
   const loadUsers = async () => {
     setLoadingUsers(true);
-    setError("");
     try {
       const response = await axiosClient.get("/users/list");
       const payload = response?.data?.data;
@@ -65,7 +63,7 @@ export default function UserManagementPage() {
       setUsers(normalized);
     } catch (e: any) {
       setUsers([]);
-      setError(e?.response?.data?.message || tr("account.loadUsersError", "Could not load users."));
+      notify.error(e?.response?.data?.message || tr("account.loadUsersError", "Could not load users."));
     } finally {
       setLoadingUsers(false);
     }
@@ -89,11 +87,9 @@ export default function UserManagementPage() {
   }, [users]);
 
   const onCreateUser = async () => {
-    setError("");
-    setMessage("");
     try {
       const res = await createUser({ username, email, password, level });
-      setMessage(res.data?.message || tr("account.saved", "Saved successfully."));
+      notify.success(res.data?.message || tr("account.saved", "Saved successfully."));
       setUsername("");
       setEmail("");
       setPassword("");
@@ -101,7 +97,7 @@ export default function UserManagementPage() {
       setShowCreateModal(false);
       await loadUsers();
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("account.saveError", "Could not save."));
+      notify.error(e?.response?.data?.message || tr("account.saveError", "Could not save."));
     }
   };
 
@@ -114,19 +110,17 @@ export default function UserManagementPage() {
 
   const onUpdateUser = async () => {
     if (!editingUser) return;
-    setError("");
-    setMessage("");
     try {
       const res = await updateUser(editingUser.uid, {
         level: updateLevel || undefined,
         status: status || undefined,
         password: updatePassword || undefined,
       });
-      setMessage(res.data?.message || tr("account.saved", "Saved successfully."));
+      notify.success(res.data?.message || tr("account.saved", "Saved successfully."));
       setEditingUser(null);
       await loadUsers();
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("account.saveError", "Could not save."));
+      notify.error(e?.response?.data?.message || tr("account.saveError", "Could not save."));
     }
   };
 
@@ -140,9 +134,6 @@ export default function UserManagementPage() {
           {tr("account.userManagementSubtitle", "Owner actions: create and update subordinate users.")}
         </p>
       </div>
-
-      {message && <p className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-700">{message}</p>}
-      {error && <p className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">{error}</p>}
 
       <section className="w-full rounded-xl border border-red-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">

@@ -3,13 +3,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLang } from "@/lang";
 import { getBotUsersView, setBotUsersConfig } from "@/services/BotUsersService";
+import { notify } from "@/utils/notify";
 
 export default function BotConfigPage() {
   const { t } = useLang();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
 
   const [initial, setInitial] = useState({
     telegram_bot_token: "",
@@ -32,7 +31,6 @@ export default function BotConfigPage() {
 
   const load = async () => {
     setLoading(true);
-    setError("");
     try {
       const res = await getBotUsersView();
       const next = {
@@ -44,7 +42,7 @@ export default function BotConfigPage() {
       setInitial(next);
       setForm(next);
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("botConfig.loadError", "Could not load bot config."));
+      notify.error(e?.response?.data?.message || tr("botConfig.loadError", "Could not load bot config."));
     } finally {
       setLoading(false);
     }
@@ -69,8 +67,6 @@ export default function BotConfigPage() {
   const onSave = async () => {
     if (!hasChanges || saving) return;
     setSaving(true);
-    setError("");
-    setMessage("");
     try {
       const res = await setBotUsersConfig(changedPayload);
       const next = {
@@ -81,9 +77,9 @@ export default function BotConfigPage() {
       };
       setInitial(next);
       setForm(next);
-      setMessage(tr("botConfig.saved", "Bot configuration saved."));
+      notify.success(tr("botConfig.saved", "Bot configuration saved."));
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("botConfig.saveError", "Could not save bot config."));
+      notify.error(e?.response?.data?.message || tr("botConfig.saveError", "Could not save bot config."));
     } finally {
       setSaving(false);
     }
@@ -99,9 +95,6 @@ export default function BotConfigPage() {
           {tr("botConfig.subtitle", "Manage tokens for Telegram, Discord, Slack and Zalo.")}
         </p>
       </div>
-
-      {message && <p className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-700">{message}</p>}
-      {error && <p className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">{error}</p>}
 
       {loading ? (
         <div className="rounded-xl border border-red-200 bg-white p-4 text-sm text-zinc-600">

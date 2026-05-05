@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Menu, Moon, Sun } from "lucide-react";
+import { Toaster } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { LangProvider } from "@/lang/LangProvider";
 import AppSidebar from "@/components/AppSidebar";
@@ -97,6 +98,20 @@ export function ClientLayout({ children }: ClientLayoutProps) {
   return (
     <QueryClientProvider client={queryClient}>
       <LangProvider>
+        <Toaster
+          position="top-right"
+          duration={2500}
+          toastOptions={{
+            className:
+              "border border-zinc-200/60 bg-white/70 text-zinc-900 shadow-lg backdrop-blur-md dark:border-zinc-700/60 dark:bg-zinc-900/65 dark:text-zinc-100",
+            classNames: {
+              success:
+                "border-emerald-300/60 bg-emerald-50/70 text-emerald-900 dark:border-emerald-600/40 dark:bg-emerald-950/45 dark:text-emerald-100",
+              error:
+                "border-rose-300/60 bg-rose-50/70 text-rose-900 dark:border-rose-600/40 dark:bg-rose-950/45 dark:text-rose-100",
+            },
+          }}
+        />
         {isLoginPage ? (
           <main className="min-h-dvh font-sans selection:bg-red-200 selection:text-red-900 sm:min-h-screen">{children}</main>
         ) : (

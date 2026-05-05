@@ -9,7 +9,9 @@ import { logoutUser } from "@/services/AuthService";
 import {
   Bot,
   Brain,
+  CalendarClock,
   ChevronLeft,
+  KeyRound,
   Globe,
   LogOut,
   MessageSquare,
@@ -74,10 +76,14 @@ export default function AppSidebar({
   const navItems = [
     { href: "/chat", label: t("sidebar.chat"), icon: MessageSquare },
     { href: "/workflows", label: t("sidebar.workflows"), icon: Workflow },
-    { href: "/websites", label: t("sidebar.myWebsites"), icon: Globe },
     ...(user?.level === "owner" || user?.level === "colleague"
-      ? [{ href: "/memory", label: t("sidebar.memory"), icon: Brain }]
+      ? [
+          { href: "/workflow-schedules", label: t("sidebar.workflowSchedules"), icon: CalendarClock },
+          { href: "/memory", label: t("sidebar.memory"), icon: Brain },
+        ]
       : []),
+    { href: "/websites", label: t("sidebar.myWebsites"), icon: Globe },
+    { href: "/my-setting", label: t("sidebar.mySetting"), icon: KeyRound },
     { href: "/account/profile", label: t("sidebar.profile"), icon: User },
     ...(user?.level === "owner"
       ? [

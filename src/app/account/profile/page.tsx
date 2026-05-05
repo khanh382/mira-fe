@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { changePassword, getCurrentUser, updateProfile, updateProfileAdvanced } from "@/services/AuthService";
 import { finishGogConnect, finishGogReconnect, getGogStatus, resetGogConnect, saveGogCredentials, startGogConnect, startGogReconnect } from "@/services/GogService";
 import { useLang } from "@/lang";
+import { notify } from "@/utils/notify";
 
 export default function ProfilePage() {
   const { t } = useLang();
@@ -136,6 +137,18 @@ export default function ProfilePage() {
   useEffect(() => {
     void loadGogStatus();
   }, []);
+
+  useEffect(() => {
+    if (!message) return;
+    notify.success(message);
+    setMessage("");
+  }, [message]);
+
+  useEffect(() => {
+    if (!error) return;
+    notify.error(error);
+    setError("");
+  }, [error]);
 
   const onUpdateSocial = async () => {
     if (!uid) return;
@@ -434,9 +447,6 @@ export default function ProfilePage() {
           {tr("account.profileSubtitle", "Manage account profile and social IDs.")}
         </p>
       </div>
-
-      {message && <p className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-700">{message}</p>}
-      {error && <p className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">{error}</p>}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="rounded-xl border border-red-200 bg-white p-4">

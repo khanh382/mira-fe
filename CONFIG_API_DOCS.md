@@ -4,9 +4,11 @@ Tai lieu mo ta API module `config`.
 
 ## Tong quan
 
-- Base route: `/config`
+- Base route (app): **`/api/v1/config`** (prefix toàn cục `api/v1`).
 - Auth: bat buoc JWT
 - Phan quyen: chi `owner` duoc truy cap (`Only owner can manage config`)
+- Endpoint: `GET /view`, `POST /set`, **`GET /get-time-now`** (đồng hồ theo múi giờ scheduler).
+- Chuẩn hoá thời gian user-input → UTC trước khi lưu `timestamptz`: **`GlobalConfigService.normalizeUserTemporalToUtcForDb`** — xem **`docs/SCHEDULER_DATETIME_PERSISTENCE.md`**.
 
 ## Format response
 
@@ -55,12 +57,13 @@ Truong chinh:
 - Scheduler:
   - `schedulerMaxRetriesPerTick`
   - `schedulerMaxConsecutiveFailedTicks`
+  - `schedulerTimezone` (string IANA, cột `cof_scheduler_timezone`) — múi giờ cho mọi CronJob do `ScheduledTasksService` đăng ký (heartbeat, n8n, workflow schedule). Trống / không hợp lệ → **`UTC`** (+0); không dùng biến `TZ` trong `.env`.
 
 ---
 
 ## 1) Xem config
 
-`GET /config/view`
+`GET /api/v1/config/view`
 
 ### Quyen
 
@@ -72,6 +75,7 @@ Truong chinh:
 - Cac API key se duoc mask thanh chuoi `*************`.
 - `openaiOAuth.accessToken` va `refreshToken` (neu co) bi mask.
 - `ollama.apiKey` va `lmStudio.apiKey` neu co cung bi mask.
+- **`schedulerTimezone`**: IANA trong DB (không mask); có thể `null` nếu chưa cấu hình — cron khi đó dùng **`UTC`** (xem `getSchedulerTimezone()`).
 
 ### Response example
 
@@ -89,7 +93,8 @@ Truong chinh:
     },
     "lmStudio": null,
     "schedulerMaxRetriesPerTick": 3,
-    "schedulerMaxConsecutiveFailedTicks": 3
+    "schedulerMaxConsecutiveFailedTicks": 3,
+    "schedulerTimezone": "Asia/Ho_Chi_Minh"
   }
 }
 ```
@@ -100,9 +105,49 @@ Truong chinh:
 
 ---
 
+## 1.1) Giờ hiện tại theo múi giờ scheduler
+
+`GET /api/v1/config/get-time-now`
+
+### Quyền
+
+- Chỉ `owner`.
+
+### Hành vi
+
+- Trả về thời điểm **hiện tại** (cùng một `epochMs` / `utcIso`) biểu diễn theo **`effectiveSchedulerTimezone`** — đúng múi giờ mà `ScheduledTasksService` dùng cho CronJob (giá trị trong `config.schedulerTimezone` nếu IANA hợp lệ, không thì **`UTC`**).
+- `storedSchedulerTimezone`: giá trị đang lưu trong DB (có thể `null` hoặc chuỗi không hợp lệ để UI cảnh báo).
+- `localDateTime`: dạng `YYYY-MM-DD HH:mm:ss` theo múi effective.
+- `localDateTimeVi`: chuỗi theo locale `vi-VN`.
+- `gmtOffsetLabel`: nhãn offset (ví dụ `GMT+7`, `GMT+00:00`) — phụ thuộc engine JS.
+
+### Response example
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "storedSchedulerTimezone": "Asia/Ho_Chi_Minh",
+    "effectiveSchedulerTimezone": "Asia/Ho_Chi_Minh",
+    "epochMs": 1746201234567,
+    "utcIso": "2026-05-02T14:00:34.567Z",
+    "localDateTime": "2026-05-02 21:00:34",
+    "localDateTimeVi": "21:00:34 2/5/2026",
+    "gmtOffsetLabel": "GMT+7"
+  }
+}
+```
+
+### Lỗi thường gặp
+
+- `403`: không phải owner
+
+---
+
 ## 2) Cap nhat config
 
-`POST /config/set`
+`POST /api/v1/config/set`
 
 ### Quyen
 
@@ -113,6 +158,7 @@ Truong chinh:
 - Body la `Partial<Config>`, co the gui 1 hoac nhieu field.
 - Neu chua co ban ghi config thi se tao moi.
 - Neu da co ban ghi thi se merge va save.
+- Có thể gửi **`schedulerTimezone`** (string IANA, ví dụ `"Asia/Ho_Chi_Minh"`, `"UTC"`) để đổi múi giờ cron; chuỗi không hợp lệ sẽ bị bỏ qua lúc chạy cron (fallback `UTC`) — nên kiểm tra bằng **`GET /config/get-time-now`** sau khi lưu.
 
 ### Request example
 
@@ -130,13 +176,14 @@ Truong chinh:
     "baseUrl": "http://localhost:11434",
     "apiKey": null
   },
-  "schedulerMaxRetriesPerTick": 5
+  "schedulerMaxRetriesPerTick": 5,
+  "schedulerTimezone": "Asia/Ho_Chi_Minh"
 }
 ```
 
 ### Response
 
-- `200` + config da luu (khong mask o endpoint set).
+- `200` + config da luu (khong mask o endpoint set). Phản hồi gồm đủ các cột entity, kể cả **`schedulerTimezone`**.
 
 ### Loi thuong gap
 
@@ -270,10 +317,13 @@ Response:
     "connected": true,
     "usable": true,
     "expiresAt": "2026-06-01T12:00:00.000Z",
-    "tokenType": "Bearer"
+    "tokenType": "Bearer",
+    "pendingTarget": "global"
   }
 }
 ```
+
+`pendingTarget`: `global` | `user_config` | `null` — phiên OAuth Codex dang cho paste/callback (neu co). **Chi mot phien cho moi uid:** neu user mo `/user-config/connect/chatgpt-oauth` mode=start khi dang cho finish global, phien global bi huy.
 
 ---
 

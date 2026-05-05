@@ -12,6 +12,7 @@ import {
   type UpdateMyWebsitePayload,
   type WebsiteAuthType,
 } from "@/services/WebsiteService";
+import { notify } from "@/utils/notify";
 
 type FormState = {
   domain: string;
@@ -42,8 +43,6 @@ export default function WebsitesPage() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [items, setItems] = useState<MyWebsite[]>([]);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
 
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<MyWebsite | null>(null);
@@ -51,7 +50,6 @@ export default function WebsitesPage() {
 
   const load = async () => {
     setLoading(true);
-    setError("");
     try {
       const res = await listMyWebsites();
       const raw: unknown = res?.data?.data;
@@ -59,7 +57,7 @@ export default function WebsitesPage() {
       setItems(list);
     } catch (e: any) {
       setItems([]);
-      setError(e?.response?.data?.message || tr("websites.loadError", "Could not load websites."));
+      notify.error(e?.response?.data?.message || tr("websites.loadError", "Could not load websites."));
     } finally {
       setLoading(false);
     }
@@ -88,8 +86,6 @@ export default function WebsitesPage() {
   const openCreate = () => {
     setEditing(null);
     setForm({ ...emptyForm });
-    setMessage("");
-    setError("");
     setShowCreate(true);
   };
 
@@ -103,8 +99,6 @@ export default function WebsitesPage() {
       token: "",
       note: item.note || "",
     });
-    setMessage("");
-    setError("");
   };
 
   const closeModal = () => {
@@ -131,12 +125,10 @@ export default function WebsitesPage() {
   const onCreate = async () => {
     const err = validate("create");
     if (err) {
-      setError(err);
+      notify.error(err);
       return;
     }
     setSaving(true);
-    setError("");
-    setMessage("");
     try {
       const payload: CreateMyWebsitePayload = {
         domain: form.domain.trim(),
@@ -147,11 +139,11 @@ export default function WebsitesPage() {
         note: form.note.trim() ? form.note.trim() : null,
       };
       await createMyWebsite(payload);
-      setMessage(tr("websites.created", "Website created."));
+      notify.success(tr("websites.created", "Website created."));
       closeModal();
       await load();
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("websites.createError", "Could not create website."));
+      notify.error(e?.response?.data?.message || tr("websites.createError", "Could not create website."));
     } finally {
       setSaving(false);
     }
@@ -161,12 +153,10 @@ export default function WebsitesPage() {
     if (!editing) return;
     const err = validate("edit");
     if (err) {
-      setError(err);
+      notify.error(err);
       return;
     }
     setSaving(true);
-    setError("");
-    setMessage("");
     try {
       const payload: UpdateMyWebsitePayload = {
         domain: form.domain.trim(),
@@ -179,11 +169,11 @@ export default function WebsitesPage() {
         payload.token = form.token;
       }
       await updateMyWebsite(editing.id, payload);
-      setMessage(tr("websites.updated", "Website updated."));
+      notify.success(tr("websites.updated", "Website updated."));
       closeModal();
       await load();
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("websites.updateError", "Could not update website."));
+      notify.error(e?.response?.data?.message || tr("websites.updateError", "Could not update website."));
     } finally {
       setSaving(false);
     }
@@ -194,14 +184,12 @@ export default function WebsitesPage() {
       return;
     }
     setDeletingId(item.id);
-    setError("");
-    setMessage("");
     try {
       await deleteMyWebsite(item.id);
-      setMessage(tr("websites.deleted", "Website deleted."));
+      notify.success(tr("websites.deleted", "Website deleted."));
       await load();
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("websites.deleteError", "Could not delete website."));
+      notify.error(e?.response?.data?.message || tr("websites.deleteError", "Could not delete website."));
     } finally {
       setDeletingId(null);
     }
@@ -227,15 +215,6 @@ export default function WebsitesPage() {
           {tr("websites.subtitle", "Manage external domains and their auth tokens for HTTP integrations.")}
         </p>
       </div>
-
-      {message && (
-        <p className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </p>
-      )}
-      {error && (
-        <p className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">{error}</p>
-      )}
 
       <section className="w-full rounded-xl border border-red-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">

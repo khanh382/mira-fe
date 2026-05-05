@@ -16,6 +16,7 @@ import {
   type MemoryRagType,
   type UpdateMemoryRagPayload,
 } from "@/services/MemoryService";
+import { notify } from "@/utils/notify";
 
 function utf8ByteLength(s: string): number {
   return new TextEncoder().encode(s).length;
@@ -46,9 +47,6 @@ export default function MemoryPage() {
   };
 
   const canAccess = user?.level === "owner" || user?.level === "colleague";
-
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
 
   const [wmEditorOpen, setWmEditorOpen] = useState(false);
   const [wmEditorLoading, setWmEditorLoading] = useState(false);
@@ -115,7 +113,6 @@ export default function MemoryPage() {
 
   const loadRags = async () => {
     setRagsLoading(true);
-    setError("");
     try {
       const res = await listMemoryRags();
       const raw: unknown = res?.data?.data;
@@ -126,7 +123,7 @@ export default function MemoryPage() {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         t("memory.ragsLoadError");
-      setError(msg === "memory.ragsLoadError" ? "Could not load memory RAGs." : msg);
+      notify.error(msg === "memory.ragsLoadError" ? "Could not load memory RAGs." : msg);
     } finally {
       setRagsLoading(false);
     }
@@ -150,11 +147,10 @@ export default function MemoryPage() {
     }
     setWmSaving(true);
     setWmModalError("");
-    setMessage("");
     try {
       const res = await putWorkspaceMemory(wmContent);
       const d = res.data?.data;
-      setMessage(tr("memory.workspaceSaved", "MEMORY.md updated."));
+      notify.success(tr("memory.workspaceSaved", "MEMORY.md updated."));
       if (d?.updatedAt) {
         setWmMeta((prev) =>
           prev ? { ...prev, exists: true, updatedAt: d.updatedAt } : prev,
@@ -183,8 +179,6 @@ export default function MemoryPage() {
   const openCreateRag = () => {
     setEditingRag(null);
     setRagForm({ ...emptyRagForm });
-    setMessage("");
-    setError("");
     setShowCreateRag(true);
   };
 
@@ -197,8 +191,6 @@ export default function MemoryPage() {
       value: rag.value ?? "",
       status: rag.status,
     });
-    setMessage("");
-    setError("");
   };
 
   const closeRagModal = () => {
@@ -223,17 +215,15 @@ export default function MemoryPage() {
     const name = ragForm.name.trim();
     const code = ragForm.code.trim();
     if (!name || !code) {
-      setError(tr("memory.ragNameCodeRequired", "Name and code are required."));
+      notify.error(tr("memory.ragNameCodeRequired", "Name and code are required."));
       return;
     }
     const jErr = validateJsonIfNeeded();
     if (jErr) {
-      setError(jErr);
+      notify.error(jErr);
       return;
     }
     setRagSaving(true);
-    setError("");
-    setMessage("");
     try {
       const payload: CreateMemoryRagPayload = {
         name,
@@ -243,14 +233,14 @@ export default function MemoryPage() {
         value: ragForm.value.trim() ? ragForm.value : null,
       };
       await createMemoryRag(payload);
-      setMessage(tr("memory.ragCreated", "RAG created."));
+      notify.success(tr("memory.ragCreated", "RAG created."));
       closeRagModal();
       await loadRags();
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         tr("memory.ragCreateError", "Could not create RAG.");
-      setError(msg);
+      notify.error(msg);
     } finally {
       setRagSaving(false);
     }
@@ -261,17 +251,15 @@ export default function MemoryPage() {
     const name = ragForm.name.trim();
     const code = ragForm.code.trim();
     if (!name || !code) {
-      setError(tr("memory.ragNameCodeRequired", "Name and code are required."));
+      notify.error(tr("memory.ragNameCodeRequired", "Name and code are required."));
       return;
     }
     const jErr = validateJsonIfNeeded();
     if (jErr) {
-      setError(jErr);
+      notify.error(jErr);
       return;
     }
     setRagSaving(true);
-    setError("");
-    setMessage("");
     try {
       const payload: UpdateMemoryRagPayload = {
         name,
@@ -281,14 +269,14 @@ export default function MemoryPage() {
         value: ragForm.value.trim() ? ragForm.value : null,
       };
       await updateMemoryRag(editingRag.id, payload);
-      setMessage(tr("memory.ragUpdated", "RAG updated."));
+      notify.success(tr("memory.ragUpdated", "RAG updated."));
       closeRagModal();
       await loadRags();
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         tr("memory.ragUpdateError", "Could not update RAG.");
-      setError(msg);
+      notify.error(msg);
     } finally {
       setRagSaving(false);
     }
@@ -299,17 +287,15 @@ export default function MemoryPage() {
       return;
     }
     setDeletingRagId(rag.id);
-    setError("");
-    setMessage("");
     try {
       await deleteMemoryRag(rag.id);
-      setMessage(tr("memory.ragDeleted", "RAG deleted."));
+      notify.success(tr("memory.ragDeleted", "RAG deleted."));
       await loadRags();
     } catch (e: unknown) {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         tr("memory.ragDeleteError", "Could not delete RAG.");
-      setError(msg);
+      notify.error(msg);
     } finally {
       setDeletingRagId(null);
     }
@@ -318,11 +304,9 @@ export default function MemoryPage() {
   const onToggleRagStatus = async (rag: MemoryRag) => {
     const next: MemoryRagStatus = rag.status === "active" ? "inactive" : "active";
     setPatchingRagId(rag.id);
-    setError("");
-    setMessage("");
     try {
       await updateMemoryRag(rag.id, { status: next });
-      setMessage(
+      notify.success(
         next === "active"
           ? tr("memory.ragActivated", "RAG activated.")
           : tr("memory.ragDeactivated", "RAG deactivated."),
@@ -332,7 +316,7 @@ export default function MemoryPage() {
       const msg =
         (e as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         tr("memory.ragToggleError", "Could not change status.");
-      setError(msg);
+      notify.error(msg);
     } finally {
       setPatchingRagId(null);
     }
@@ -370,15 +354,6 @@ export default function MemoryPage() {
           )}
         </p>
       </div>
-
-      {message && (
-        <p className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-700">
-          {message}
-        </p>
-      )}
-      {error && (
-        <p className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">{error}</p>
-      )}
 
       <section className="w-full rounded-xl border border-red-200 bg-white p-4">
         <button

@@ -6,9 +6,17 @@ import {
   AppConfig,
   ChatgptOauthResponseData,
   connectChatgptOauth,
+  getConfigTimeNow,
   getConfigView,
+  SchedulerTimeNowData,
   setConfig,
 } from "@/services/ConfigService";
+
+function shouldWarnSchedulerTzMismatch(data: SchedulerTimeNowData) {
+  const stored = (data.storedSchedulerTimezone ?? "").trim();
+  return stored !== "" && stored !== data.effectiveSchedulerTimezone;
+}
+import { notify } from "@/utils/notify";
 
 type ApiKeyField =
   | "openaiApiKey"
@@ -56,6 +64,7 @@ const emptyConfig: AppConfig = {
   lmStudio: { baseUrl: "", apiKey: "" },
   schedulerMaxRetriesPerTick: 3,
   schedulerMaxConsecutiveFailedTicks: 3,
+  schedulerTimezone: "",
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -71,14 +80,14 @@ export default function SettingsPage() {
   const { t } = useLang();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
   const [oauthCallbackInput, setOauthCallbackInput] = useState("");
   const [oauthStatus, setOauthStatus] = useState<ChatgptOauthResponseData | null>(null);
   const [oauthMessage, setOauthMessage] = useState("");
   const [initialConfig, setInitialConfig] = useState<AppConfig>(emptyConfig);
   const [form, setForm] = useState<AppConfig>(emptyConfig);
+  const [schedulerTimeNow, setSchedulerTimeNow] = useState<SchedulerTimeNowData | null>(null);
+  const [timeNowLoading, setTimeNowLoading] = useState(false);
 
   const tr = (key: string, fallback: string) => {
     const value = t(key);
@@ -87,14 +96,14 @@ export default function SettingsPage() {
 
   const loadConfig = async () => {
     setLoading(true);
-    setError("");
     try {
       const res: { data: AppConfig } = await getConfigView();
       const next = { ...emptyConfig, ...res.data };
       setInitialConfig(next);
       setForm(next);
+      setSchedulerTimeNow(null);
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("settings.loadError", "Could not load config."));
+      notify.error(e?.response?.data?.message || tr("settings.loadError", "Could not load config."));
     } finally {
       setLoading(false);
     }
@@ -122,6 +131,11 @@ export default function SettingsPage() {
     ) {
       payload.schedulerMaxConsecutiveFailedTicks = form.schedulerMaxConsecutiveFailedTicks;
     }
+    const tzForm = (form.schedulerTimezone ?? "").trim();
+    const tzInit = (initialConfig.schedulerTimezone ?? "").trim();
+    if (tzForm !== tzInit) {
+      payload.schedulerTimezone = tzForm === "" ? null : tzForm;
+    }
     if (JSON.stringify(form.ollama) !== JSON.stringify(initialConfig.ollama)) {
       payload.ollama = form.ollama;
     }
@@ -136,26 +150,40 @@ export default function SettingsPage() {
   const onSave = async () => {
     if (!hasChanges || saving) return;
     setSaving(true);
-    setError("");
-    setSuccess("");
     try {
       const res: { data: AppConfig } = await setConfig(changedPayload);
       const next = { ...emptyConfig, ...res.data };
       setInitialConfig(next);
       setForm(next);
-      setSuccess(tr("settings.saved", "Config saved successfully."));
+      setSchedulerTimeNow(null);
+      notify.success(tr("settings.saved", "Config saved successfully."));
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("settings.saveError", "Could not save config."));
+      notify.error(e?.response?.data?.message || tr("settings.saveError", "Could not save config."));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onFetchSchedulerTimeNow = async () => {
+    if (timeNowLoading) return;
+    setTimeNowLoading(true);
+    try {
+      const res = await getConfigTimeNow();
+      setSchedulerTimeNow(res.data);
+    } catch (e: any) {
+      setSchedulerTimeNow(null);
+      notify.error(
+        e?.response?.data?.message ||
+          tr("settings.schedulerClockError", "Could not load scheduler time."),
+      );
+    } finally {
+      setTimeNowLoading(false);
     }
   };
 
   const onStartOauth = async () => {
     if (oauthBusy) return;
     setOauthBusy(true);
-    setError("");
-    setSuccess("");
     setOauthMessage("");
     try {
       const res = await connectChatgptOauth({ mode: "start" });
@@ -172,7 +200,7 @@ export default function SettingsPage() {
         window.open(data.authUrl, "_blank", "noopener,noreferrer");
       }
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("settings.oauthStartError", "Could not start OAuth flow."));
+      notify.error(e?.response?.data?.message || tr("settings.oauthStartError", "Could not start OAuth flow."));
     } finally {
       setOauthBusy(false);
     }
@@ -181,12 +209,10 @@ export default function SettingsPage() {
   const onFinishOauth = async () => {
     if (oauthBusy) return;
     if (!oauthCallbackInput.trim()) {
-      setError(tr("settings.oauthCallbackRequired", "Please paste callback URL or code."));
+      notify.error(tr("settings.oauthCallbackRequired", "Please paste callback URL or code."));
       return;
     }
     setOauthBusy(true);
-    setError("");
-    setSuccess("");
     setOauthMessage("");
     try {
       const res = await connectChatgptOauth({
@@ -196,11 +222,12 @@ export default function SettingsPage() {
       const data = (res?.data || {}) as ChatgptOauthResponseData;
       setOauthStatus(data);
       if (data.ok) {
-        setSuccess(
+        notify.success(
           data.message ||
             tr("settings.oauthConnected", "OpenAI Codex OAuth connected successfully."),
         );
         setOauthCallbackInput("");
+        await loadConfig();
       } else {
         setOauthMessage(
           data.message ||
@@ -211,7 +238,7 @@ export default function SettingsPage() {
         );
       }
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("settings.oauthFinishError", "Could not finish OAuth flow."));
+      notify.error(e?.response?.data?.message || tr("settings.oauthFinishError", "Could not finish OAuth flow."));
     } finally {
       setOauthBusy(false);
     }
@@ -220,7 +247,6 @@ export default function SettingsPage() {
   const onCheckOauthStatus = async () => {
     if (oauthBusy) return;
     setOauthBusy(true);
-    setError("");
     setOauthMessage("");
     try {
       const res = await connectChatgptOauth({ mode: "status" });
@@ -232,7 +258,27 @@ export default function SettingsPage() {
           : tr("settings.oauthNotConnectedState", "OAuth is not connected yet."),
       );
     } catch (e: any) {
-      setError(e?.response?.data?.message || tr("settings.oauthStatusError", "Could not check OAuth status."));
+      notify.error(e?.response?.data?.message || tr("settings.oauthStatusError", "Could not check OAuth status."));
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const onCancelOauth = async () => {
+    if (oauthBusy) return;
+    setOauthBusy(true);
+    setOauthMessage("");
+    try {
+      const res = await connectChatgptOauth({ mode: "cancel" });
+      const data = (res?.data || {}) as ChatgptOauthResponseData;
+      setOauthStatus(data);
+      notify.success(
+        data.message || tr("settings.oauthCancelOk", "Pending OAuth flow cancelled."),
+      );
+    } catch (e: any) {
+      notify.error(
+        e?.response?.data?.message || tr("settings.oauthCancelError", "Could not cancel OAuth flow."),
+      );
     } finally {
       setOauthBusy(false);
     }
@@ -246,9 +292,6 @@ export default function SettingsPage() {
           {tr("settings.subtitle", "Owner-only config management for providers and scheduler.")}
         </p>
       </div>
-
-      {error && <p className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">{error}</p>}
-      {success && <p className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm text-emerald-700">{success}</p>}
 
       {loading ? (
         <div className="rounded-xl border border-red-200 bg-white p-4 text-sm text-zinc-600">
@@ -313,6 +356,14 @@ export default function SettingsPage() {
                 >
                   {tr("settings.checkOauthStatus", "Check OAuth status")}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void onCancelOauth()}
+                  disabled={oauthBusy}
+                  className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs text-zinc-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {tr("settings.oauthCancelPendingFlow", "Cancel pending flow")}
+                </button>
               </div>
               <div className="mt-3 space-y-2">
                 <input
@@ -335,7 +386,13 @@ export default function SettingsPage() {
               </div>
               {(oauthStatus || oauthMessage) && (
                 <div className="mt-3 rounded border border-red-200 bg-white p-2 text-xs text-zinc-700">
-                  {oauthMessage && <p>{oauthMessage}</p>}
+                  {oauthMessage && <p className="mb-1">{oauthMessage}</p>}
+                  {oauthStatus && "pendingTarget" in oauthStatus ? (
+                    <p className="mb-1">
+                      {tr("settings.oauthPendingTarget", "Pending OAuth target")}:{" "}
+                      <span className="font-mono">{String(oauthStatus.pendingTarget)}</span>
+                    </p>
+                  ) : null}
                   {oauthStatus?.connected != null && (
                     <p>
                       {tr("settings.oauthConnectedLabel", "Connected")}:{" "}
@@ -348,6 +405,11 @@ export default function SettingsPage() {
                       {oauthStatus.usable ? "true" : "false"}
                     </p>
                   )}
+                  {oauthStatus?.tokenType ? (
+                    <p>
+                      {tr("settings.oauthTokenTypeLabel", "Token type")}: {oauthStatus.tokenType}
+                    </p>
+                  ) : null}
                   {oauthStatus?.expiresAt && (
                     <p>
                       {tr("settings.oauthExpiresAtLabel", "Expires at")}: {oauthStatus.expiresAt}
@@ -415,13 +477,14 @@ export default function SettingsPage() {
           </Section>
 
           <Section title={tr("settings.scheduler", "Scheduler")}>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
                 <label className="mb-1 block text-sm text-zinc-700">
-                  schedulerMaxRetriesPerTick
+                  {tr("settings.schedulerMaxRetriesPerTick", "Max retries per tick")}
                 </label>
                 <input
                   type="number"
+                  min={0}
                   value={form.schedulerMaxRetriesPerTick ?? 0}
                   onChange={(e) =>
                     setForm((prev) => ({
@@ -434,10 +497,11 @@ export default function SettingsPage() {
               </div>
               <div>
                 <label className="mb-1 block text-sm text-zinc-700">
-                  schedulerMaxConsecutiveFailedTicks
+                  {tr("settings.schedulerMaxConsecutiveFailedTicks", "Max consecutive failed ticks")}
                 </label>
                 <input
                   type="number"
+                  min={0}
                   value={form.schedulerMaxConsecutiveFailedTicks ?? 0}
                   onChange={(e) =>
                     setForm((prev) => ({
@@ -448,6 +512,93 @@ export default function SettingsPage() {
                   className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-red-300 focus:ring-0"
                 />
               </div>
+              <div>
+                <label className="mb-1 block text-sm text-zinc-700">
+                  {tr("settings.schedulerTimezone", "Timezone (IANA)")}
+                </label>
+                <input
+                  type="text"
+                  value={form.schedulerTimezone ?? ""}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      schedulerTimezone: e.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-zinc-800 outline-none focus:border-red-300 focus:ring-0"
+                  placeholder="Asia/Ho_Chi_Minh"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  {tr(
+                    "settings.schedulerTimezoneHint",
+                    "Cron jobs use this zone. Leave empty or invalid values fall back to UTC on the server.",
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 border-t border-red-100 pt-4">
+              <p className="mb-2 text-[11px] text-zinc-500">
+                {tr(
+                  "settings.schedulerClockSavedOnlyHint",
+                  "Uses the timezone already saved on the server. Save changes first if you edited the field above.",
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={onFetchSchedulerTimeNow}
+                disabled={timeNowLoading || loading}
+                className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {timeNowLoading
+                  ? tr("settings.schedulerClockLoading", "Loading…")
+                  : tr("settings.checkSchedulerClock", "Check scheduler time")}
+              </button>
+              {schedulerTimeNow && (
+                <dl className="mt-3 grid gap-2 text-sm text-zinc-800 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs text-zinc-500">
+                      {tr("settings.schedulerEffectiveTz", "Effective timezone")}
+                    </dt>
+                    <dd className="font-medium">{schedulerTimeNow.effectiveSchedulerTimezone}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-zinc-500">
+                      {tr("settings.schedulerStoredTz", "Stored timezone")}
+                    </dt>
+                    <dd className="font-medium">
+                      {schedulerTimeNow.storedSchedulerTimezone ?? "—"}
+                    </dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs text-zinc-500">
+                      {tr("settings.schedulerLocalTime", "Local time (server view)")}
+                    </dt>
+                    <dd className="font-mono text-base">{schedulerTimeNow.localDateTime}</dd>
+                    <dd className="text-xs text-zinc-600">{schedulerTimeNow.localDateTimeVi}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-zinc-500">
+                      {tr("settings.schedulerGmtOffset", "Offset")}
+                    </dt>
+                    <dd>{schedulerTimeNow.gmtOffsetLabel}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-zinc-500">UTC</dt>
+                    <dd className="break-all font-mono text-xs">{schedulerTimeNow.utcIso}</dd>
+                  </div>
+                </dl>
+              )}
+              {schedulerTimeNow && shouldWarnSchedulerTzMismatch(schedulerTimeNow) && (
+                <p className="mt-2 text-xs text-amber-800">
+                  {tr(
+                    "settings.schedulerTzFallbackWarning",
+                    "Stored value differs from effective zone — invalid or empty IANA may fall back to UTC.",
+                  )}
+                </p>
+              )}
             </div>
           </Section>
 
