@@ -83,7 +83,6 @@ export default function AppSidebar({
         ]
       : []),
     { href: "/websites", label: t("sidebar.myWebsites"), icon: Globe },
-    { href: "/my-setting", label: t("sidebar.mySetting"), icon: KeyRound },
     { href: "/account/profile", label: t("sidebar.profile"), icon: User },
     ...(user?.level === "owner"
       ? [
@@ -92,7 +91,10 @@ export default function AppSidebar({
         ]
       : []),
     { href: "/bot-config", label: t("sidebar.botConfig"), icon: Bot },
-    { href: "/settings", label: t("sidebar.settings"), icon: Settings },
+    { href: "/my-setting", label: t("sidebar.mySetting"), icon: KeyRound },
+    ...(user?.level === "owner"
+      ? [{ href: "/settings", label: t("sidebar.settings"), icon: Settings }]
+      : []),
   ];
 
   const isDark = theme === "dark";

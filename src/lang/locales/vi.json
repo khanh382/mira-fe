@@ -595,6 +595,7 @@
   "settings": {
     "title": "Cài đặt",
     "subtitle": "Quản lý config chỉ dành cho owner (provider và scheduler).",
+    "forbidden": "Khu vực này chỉ dành cho tài khoản owner.",
     "loading": "Đang tải config...",
     "loadError": "Không thể tải config.",
     "saveError": "Không thể lưu config.",

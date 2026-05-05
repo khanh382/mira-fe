@@ -595,6 +595,7 @@
   "settings": {
     "title": "Settings",
     "subtitle": "Owner-only config management for providers and scheduler.",
+    "forbidden": "This area is only available for owner accounts.",
     "loading": "Loading config...",
     "loadError": "Could not load config.",
     "saveError": "Could not save config.",

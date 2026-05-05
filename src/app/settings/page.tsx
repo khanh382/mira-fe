@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useLang } from "@/lang";
+import { useAuth } from "@/hooks/useAuth";
 import {
   AppConfig,
   ChatgptOauthResponseData,
@@ -78,6 +79,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function SettingsPage() {
   const { t } = useLang();
+  const { user, isChecking } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
@@ -93,6 +95,7 @@ export default function SettingsPage() {
     const value = t(key);
     return value === key ? fallback : value;
   };
+  const canAccess = user?.level === "owner";
 
   const loadConfig = async () => {
     setLoading(true);
@@ -110,8 +113,12 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
+    if (isChecking || !canAccess) {
+      setLoading(false);
+      return;
+    }
     loadConfig();
-  }, []);
+  }, [isChecking, canAccess]);
 
   const changedPayload = useMemo(() => {
     const payload: Partial<AppConfig> = {};
@@ -283,6 +290,29 @@ export default function SettingsPage() {
       setOauthBusy(false);
     }
   };
+
+  if (isChecking) {
+    return (
+      <div className="w-full min-w-0 space-y-3 sm:space-y-4">
+        <div className="rounded-xl border border-red-200 bg-white p-4 text-sm text-zinc-600">
+          {tr("settings.loading", "Loading config...")}
+        </div>
+      </div>
+    );
+  }
+
+  if (!canAccess) {
+    return (
+      <div className="w-full min-w-0 space-y-3 sm:space-y-4">
+        <div className="rounded-xl border border-red-200 bg-white p-4">
+          <h1 className="text-2xl font-semibold text-[rgb(173,8,8)]">{tr("settings.title", "Settings")}</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            {tr("settings.forbidden", "This area is only available for owner accounts.")}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full min-w-0 space-y-3 sm:space-y-4">
