@@ -8,7 +8,7 @@ Tai lieu mo ta API module `config`.
 - Auth: bat buoc JWT
 - Phan quyen: chi `owner` duoc truy cap (`Only owner can manage config`)
 - Endpoint: `GET /view`, `POST /set`, **`GET /get-time-now`** (đồng hồ theo múi giờ scheduler).
-- Chuẩn hoá thời gian user-input → UTC trước khi lưu `timestamptz`: **`GlobalConfigService.normalizeUserTemporalToUtcForDb`** — xem **`docs/SCHEDULER_DATETIME_PERSISTENCE.md`**.
+- Chuẩn hoá thời gian user-input → UTC trước khi lưu `timestamptz`: **`GlobalConfigService.normalizeUserTemporalToUtcForDb`** — xem **`docs/system-flows/SCHEDULER_DATETIME_PERSISTENCE.md`**.
 
 ## Format response
 

@@ -94,6 +94,23 @@ sequenceDiagram
    - **`step`**: cursor chỉ cập nhật khi **`run.status === SUCCEEDED`**.
    - **Log**: luôn append khi `workflow_set_payload` (kể cả run fail — vẫn ghi `error` và output nếu có).
 
+### 4.1. Nhiều lịch workflow trùng một mốc cron (vd. mỗi ngày 7:00)
+
+**Có được “tất cả đều chạy” không?** Ở tầng **scheduler** (`ScheduledTasksService` + `CronJob`):
+
+- Mỗi dòng **`scheduled_tasks_workflow`** đang **ACTIVE** có **`task_code` riêng** (toàn hệ thống không trùng) → một **`CronJob`** riêng, callback gọi `executeTick(taskCode, 'workflow')`.
+- Cùng một thời điểm trên đồng hồ (vd. 7:00 theo `cof_scheduler_timezone`), **mọi** lịch đến giờ đều **có callback riêng** — **không** chặn chéo giữa hai `task_code` khác nhau (kể cả khác user).
+- Cờ **`running`** trong bộ nhớ chỉ khóa theo **`task_code`**: nếu **cùng một lịch** lần chạy trước **chưa xong** mà tick cron sau đã tới → tick sau **bị bỏ qua** (`Cron tick skipped (overlap)`). Hai lịch khác nhau **không** dùng chung khóa nên **không** vì nhau mà skip.
+
+**Ổn định vận hành (thực tế tải):** Code **không** có hàng đợi toàn cục “mỗi giây chỉ N workflow”; mỗi tick có thể **`runWorkflow`** song song với các tick khác. Số lịch rất lớn cùng giờ có thể dẫn tới:
+
+- tải CPU / bể kết nối DB / timeout `timeout_ms` của từng task;
+- giới hạn tài nguyên phía model (rate limit) nếu nhiều node LLM chạy đồng thời.
+
+Trong các trường hợp đó một số run có thể **chậm** hoặc **lỗi** (đếm `consecutiveFailures` như mục 2), chứ không phải “scheduler cố tình chỉ chạy một lịch”.
+
+**Thứ tự:** Nếu nhiều `CronJob` cùng kích hoạt trong cùng giây, **thứ tự thực thi giữa các lịch** không được tài liệu hoá là cố định — coi như **song song**, không dựa vào thứ tự “user A trước user B”.
+
 ---
 
 ## 5. Bốn kiểu `sp_type` (`ScheduledPayloadType`)
@@ -173,6 +190,8 @@ Sau mỗi lần chạy có `workflow_set_payload`, log append với `turnInSessi
 - **`intervalMinutes`** (số nguyên, **tối thiểu 5**): backend cố gắng chuyển sang một biểu thức cron đơn; nếu **không biểu diễn được** (ví dụ **95** phút) → **400** với thông báo có dạng “**1 giờ 35 phút** (95 phút) …”.
 - Các dạng **được hỗ trợ** gồm: **5–59** → `*/N * * * *`; **60** → mỗi giờ; **bội 120–1380** của 60 (120, 180, …) → mỗi vài giờ tại phút 0; **1440** → mỗi ngày `0 0 * * *`.
 - Không gửi **đồng thời** `cronExpression` và `intervalMinutes`.
+
+**Múi giờ thực thi cron (toàn hệ thống):** `ScheduledTasksService` dùng **`config.schedulerTimezone`** (IANA, cột `cof_scheduler_timezone`) qua `GlobalConfigService.getSchedulerTimezone()`. Nếu null/rỗng hoặc không hợp lệ → **`UTC`** (+0). **Không** đọc `TZ` từ `.env`. Đổi config: job làm mới tối đa ~**30 giây** (interval refresh) hoặc sau **restart** backend.
 
 **OpenAPI / Swagger UI:** **`/api/docs`** (không nằm dưới `api/v1`). Nhóm tag **`agent/scheduled-workflows`**. Lưu ý app bọc mọi JSON thành công trong **`{ statusCode, message, data }`** — schema trong Swagger mô tả **phần `data`**.
 

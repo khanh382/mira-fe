@@ -173,7 +173,7 @@ export default function AppSidebar({
               <select
                 value={lang}
                 onChange={(e) => {
-                  setLang(e.target.value as "en" | "vi");
+                  setLang(e.target.value as typeof lang);
                   onNav();
                 }}
                 className={`min-h-11 w-full min-w-0 touch-manipulation appearance-none rounded-xl border px-3 py-2 text-sm font-medium outline-none transition focus:border-red-300 focus:ring-4 focus:ring-red-500/10 ${
@@ -185,6 +185,7 @@ export default function AppSidebar({
               >
                 <option value="en">🇺🇸 English</option>
                 <option value="vi">🇻🇳 Tiếng Việt</option>
+                <option value="kr">🇰🇷 한국어</option>
               </select>
             </div>
             <button

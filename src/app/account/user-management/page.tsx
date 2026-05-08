@@ -78,13 +78,13 @@ export default function UserManagementPage() {
     void loadUsers();
   }, [isChecking, user?.level]);
 
-  if (isChecking || user?.level !== "owner") {
-    return null;
-  }
-
   const sortedUsers = useMemo(() => {
     return [...users].sort((a, b) => a.uid - b.uid);
   }, [users]);
+
+  if (isChecking || user?.level !== "owner") {
+    return null;
+  }
 
   const onCreateUser = async () => {
     try {

@@ -134,11 +134,12 @@ export default function LoginPage() {
                </p>
                <select
                   value={lang}
-                  onChange={(e) => setLang(e.target.value as "en" | "vi")}
+                  onChange={(e) => setLang(e.target.value as typeof lang)}
                   className="cursor-pointer appearance-none rounded-lg border border-zinc-200/60 bg-white/80 px-3 py-1.5 text-xs font-medium text-zinc-600 outline-none backdrop-blur-sm transition-all hover:bg-white focus:border-red-300 focus:ring-4 focus:ring-red-500/10"
                >
                   <option value="en">🇺🇸 EN</option>
                   <option value="vi">🇻🇳 VI</option>
+                  <option value="kr">🇰🇷 KR</option>
                </select>
             </div>
           </div>
@@ -152,11 +153,12 @@ export default function LoginPage() {
                 </div>
                 <select
                   value={lang}
-                  onChange={(e) => setLang(e.target.value as "en" | "vi")}
+                  onChange={(e) => setLang(e.target.value as typeof lang)}
                   className="cursor-pointer appearance-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-600 outline-none transition focus:border-red-300 focus:ring-4 focus:ring-red-500/10"
                 >
                   <option value="en">🇺🇸 EN</option>
                   <option value="vi">🇻🇳 VI</option>
+                  <option value="kr">🇰🇷 KR</option>
                 </select>
               </div>
             </div>

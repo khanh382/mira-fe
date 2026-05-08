@@ -1,9 +1,10 @@
 import en from './locales/en.json';
 import vi from './locales/vi.json';
+import kr from './locales/kr.json';
 import { useLang } from '@/lang/useLang';
 import { LangProvider } from '@/lang/LangProvider';
 
-export type LangCodes = 'en' | 'vi';
+export type LangCodes = 'en' | 'vi' | 'kr';
 export const LANG_STORAGE_KEY = 'appLang';
 
 // Định nghĩa kiểu dữ liệu có thể chứa object lồng nhau
@@ -16,10 +17,12 @@ export const langConfig: {
   listLangs: [
     { id: 1, name: "English", code: "en" },
     { id: 2, name: "Tiếng Việt", code: "vi" },
+    { id: 3, name: "한국어", code: "kr" },
   ],
   langsApp: {
     en,
     vi,
+    kr,
   }
 };
 

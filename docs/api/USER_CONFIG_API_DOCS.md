@@ -13,7 +13,7 @@ Tài liệu mô tả REST API cấu hình **riêng theo user** (bảng `user_con
 
 - Khi hệ thống resolve key provider hoặc Ollama / LM Studio: **ưu tiên `user_config`**; null hoặc lỗi → fallback **`config`** global (theo nhóm; có TTL fallback — xem code `UserConfigCredentialService`).
 
-Chi tiết schema DBML: **`docs/DATABASE_DBML.md`** (bảng `user_config`).
+Chi tiet schema DBML: **`docs/reference/DATABASE_DBML.md`** (bang `user_config`).
 
 ---
 

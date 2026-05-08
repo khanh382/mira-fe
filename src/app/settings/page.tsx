@@ -336,7 +336,10 @@ export default function SettingsPage() {
                   <label className="mb-1 block text-sm text-zinc-700">
                     {field === "kieApiKey"
                       ? tr("settings.kieApiKey", "KIE API key (image generation)")
-                      : String(field)}
+                      : tr(
+                          `botConfig.keys.${field}`,
+                          String(field).replace("ApiKey", " API key"),
+                        )}
                   </label>
                   <input
                     type={field === "kieApiKey" ? "password" : "text"}
@@ -348,14 +351,6 @@ export default function SettingsPage() {
                       isMaskedValue(initialConfig[field]) ? "*************" : ""
                     }
                   />
-                  {field === "kieApiKey" ? (
-                    <p className="mt-1 text-xs text-zinc-500">
-                      {tr(
-                        "settings.kieApiKeyHint",
-                        "From kie.ai — enables image generation via the image_generate skill (gpt4o-image, seedream, nano-banana, …). Stored like other keys; masked when loaded from View config.",
-                      )}
-                    </p>
-                  ) : null}
                 </div>
               ))}
             </div>
@@ -561,21 +556,9 @@ export default function SettingsPage() {
                   autoCapitalize="off"
                   autoCorrect="off"
                 />
-                <p className="mt-1 text-[11px] text-zinc-500">
-                  {tr(
-                    "settings.schedulerTimezoneHint",
-                    "Cron jobs use this zone. Leave empty or invalid values fall back to UTC on the server.",
-                  )}
-                </p>
               </div>
             </div>
             <div className="mt-4 border-t border-red-100 pt-4">
-              <p className="mb-2 text-[11px] text-zinc-500">
-                {tr(
-                  "settings.schedulerClockSavedOnlyHint",
-                  "Uses the timezone already saved on the server. Save changes first if you edited the field above.",
-                )}
-              </p>
               <button
                 type="button"
                 onClick={onFetchSchedulerTimeNow}

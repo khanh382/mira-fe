@@ -31,7 +31,7 @@ Dữ liệu **gắn với user** qua `mr_user_id` → `users.uid` (xóa user có
 | DTO | `src/modules/memories/dto/create-memory-rag.dto.ts`, `update-memory-rag.dto.ts` |
 | Mention + boundary rules | `src/modules/memories/memory-rag-mention.util.ts` |
 | Đăng ký app | `src/app.module.ts` — `MemoriesModule` (khi có cấu hình database) |
-| DBML (ERD / dbdiagram) | `DATABASE_DBML.md` — block `Table memory_rags` |
+| DBML (ERD / dbdiagram) | `docs/reference/DATABASE_DBML.md` — block `Table memory_rags` |
 
 Bảng Postgres: **`memory_rags`**. Tạo bảng bằng migration SQL riêng hoặc bật **`DB_SYNCHRONIZE=true`** chỉ trên môi trường dev (không khuyến nghị production).
 

@@ -4,11 +4,11 @@ Tai lieu mo ta API quan ly cac website/token trong module `http-tokens`.
 
 ## Tong quan
 
-- Base route: `/http-tokens`
+- Base route: `/api/v1/http-tokens` (global prefix trong `main.ts`)
 - Auth: bat buoc JWT
 - Co 2 nhom API:
-  - **My websites** (self-service): `/http-tokens/my...`
-  - **Owner admin** (legacy): `/http-tokens...` (chi owner)
+  - **My websites** (self-service): `/api/v1/http-tokens/my...`
+  - **Owner admin** (legacy): `/api/v1/http-tokens...` (chi owner)
 
 ## Bao mat token
 
@@ -70,13 +70,13 @@ Loi:
 
 ### 3) Tao website cua toi
 
-`POST /http-tokens/my`
+`POST /api/v1/http-tokens/my`
 
 Body:
 
 ```json
 {
-  "domain": "api.example.com",
+  "domain": "https://api.example.com",
   "authType": "api_key",
   "headerName": "x-api-key",
   "token": "secret",
@@ -84,6 +84,11 @@ Body:
   "note": "My integration"
 }
 ```
+
+- **`code` (tùy chọn)**: nếu không gửi, server tự sinh mã duy nhất từ domain + uid của bạn,
+  ví dụ `bookingcualo.com` → `bookingcualo_com_u12`. Dùng giá trị `code` trong response làm
+  `authCode` khi gọi skill `http_request`. Nếu muốn tên cố định (vd. `wp_bookingcualo`), gửi
+  rõ `"code": "wp_bookingcualo"`.
 
 Rule domain:
 - Backend normalize domain:

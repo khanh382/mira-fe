@@ -529,13 +529,6 @@ export default function MySettingPage() {
                 <h2 className="mb-1 text-lg font-semibold text-[rgb(173,8,8)]">
                   {tr("mySetting.sectionOauth", "OpenAI OAuth (personal)")}
                 </h2>
-                <p className="mb-4 text-sm text-zinc-600">
-                  {tr(
-                    "mySetting.oauthIntro",
-                    "Connect via ChatGPT OAuth Codex (browser flow). Tokens are written to your user_config by POST /user-config/connect/chatgpt-oauth.",
-                  )}
-                </p>
-
                 <div className="mb-6 rounded-xl border border-red-100 bg-red-50/50 p-4">
                   <p className="mb-1 text-sm font-semibold text-[rgb(173,8,8)]">
                     {tr("mySetting.oauthCodexTitle", "ChatGPT OAuth Codex")}

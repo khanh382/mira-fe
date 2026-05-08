@@ -74,6 +74,16 @@ function previewJson(v: unknown): string {
   }
 }
 
+function payloadTypeLabel(
+  payloadType: ScheduledPayloadTypeApi,
+  tr: (key: string, fallback: string) => string,
+): string {
+  if (payloadType === "fixed") return tr("workflowSchedules.typeFixed", "fixed");
+  if (payloadType === "step") return tr("workflowSchedules.typeStep", "step");
+  if (payloadType === "loop") return tr("workflowSchedules.typeLoop", "loop");
+  return tr("workflowSchedules.typeRandom", "random");
+}
+
 export default function WorkflowSchedulesPage() {
   const { t } = useLang();
   const { user } = useAuth();
@@ -1113,8 +1123,8 @@ export default function WorkflowSchedulesPage() {
                               <tr key={row.id}>
                                 <td className="px-2 py-2 font-mono text-xs">{row.keyName}</td>
                                 <td className="px-2 py-2">
-                                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs dark:bg-zinc-800">
-                                    {row.payloadType}
+                                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
+                                    {payloadTypeLabel(row.payloadType, tr)}
                                   </span>
                                 </td>
                                 <td className="max-w-[240px] truncate px-2 py-2 font-mono text-xs" title={row.sp_value || row.value}>
@@ -1162,7 +1172,7 @@ export default function WorkflowSchedulesPage() {
                           <table className="w-full min-w-[720px] text-left text-sm">
                             <thead className="bg-red-50 text-xs font-semibold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
                               <tr>
-                                <th className="px-2 py-2">ID</th>
+                                <th className="px-2 py-2">{tr("workflowSchedules.runId", "ID")}</th>
                                 <th
                                   className="px-2 py-2"
                                   title={tr(
@@ -1245,7 +1255,9 @@ export default function WorkflowSchedulesPage() {
                         </div>
                         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600">
                           <span>
-                            Page {runsPage} / {runsTotalPages}
+                            {tr("workflowSchedules.pageIndicator", "Page {page} / {total}")
+                              .replace("{page}", String(runsPage))
+                              .replace("{total}", String(runsTotalPages))}
                           </span>
                           <div className="flex gap-2">
                             <button
@@ -1374,7 +1386,7 @@ export default function WorkflowSchedulesPage() {
                   value={payloadForm.keyName}
                   onChange={(e) => setPayloadForm((p) => ({ ...p, keyName: e.target.value }))}
                   className="mt-1 w-full rounded-lg border border-red-300 px-2 py-2 font-mono text-sm dark:border-zinc-600 dark:bg-zinc-950"
-                  placeholder="topic"
+                  placeholder={tr("workflowSchedules.payloadKeyPlaceholder", "topic")}
                 />
               </label>
               <label className="block text-xs font-medium">
@@ -1388,7 +1400,7 @@ export default function WorkflowSchedulesPage() {
                 >
                   {PAYLOAD_TYPES.map((pt) => (
                     <option key={pt} value={pt}>
-                      {pt}
+                      {payloadTypeLabel(pt, tr)}
                     </option>
                   ))}
                 </select>

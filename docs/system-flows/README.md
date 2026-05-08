@@ -1,0 +1,12 @@
+# System Flows Docs Index
+
+Thu muc nay chua tai lieu mo ta luong xu ly va van hanh he thong:
+
+- `ARCHITECTURE.md`
+- `N8N_INTEGRATION.md`
+- `SCHEDULER_DATETIME_PERSISTENCE.md`
+- `WORKFLOW_CHAT_COMMANDS.md`
+- `WORKFLOW_MINIMAL_CONTEXT_PACK.md`
+- `WORKFLOW_PLAYBOOK.md`
+- `WORKFLOW_SCHEDULE_PAYLOAD_FLOW.md`
+- `WORKFLOW_UI_IMPLEMENTATION_GUIDE.md`

@@ -191,7 +191,7 @@ function filesFromClipboard(data: DataTransfer | null): File[] {
 }
 
 export default function ChatPage() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const narrowComposer = useSyncExternalStore(
     subscribeNarrowComposer,
     getNarrowComposerSnapshot,
@@ -235,6 +235,56 @@ export default function ChatPage() {
   const tr = (key: string, fallback: string) => {
     const value = t(key);
     return value === key ? fallback : value;
+  };
+
+  const trp = (key: string, fallback: string, params?: Record<string, string>) => {
+    const value = t(key, params);
+    if (value === key) return fallback;
+    return value;
+  };
+
+  const SKILL_DESC_ALIASES: Record<string, string> = {
+    exec: "execute_command",
+    cron_manage: "cron_job_manager",
+    skills_registry_manage: "skills_registry_manager",
+    browser: "browser_control",
+    image_understand: "image_understanding",
+    pdf_read: "pdf_reader",
+    tts: "text_to_speech",
+    message_send: "send_message",
+    threads_list: "list_chat_threads",
+    file_read: "file_reader",
+    n8n_dispatch: "dispatch_n8n_workflow",
+  };
+
+  const toReadableSkillName = (code: string): string => {
+    const cleaned = String(code || "")
+      .trim()
+      .replace(/[._-]+/g, " ")
+      .replace(/\s+/g, " ");
+    if (!cleaned) return "Skill";
+    return cleaned.replace(/\b\w/g, (m) => m.toUpperCase());
+  };
+
+  const normalizeSkillKey = (value: string): string =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, "_")
+      .replace(/_+/g, "_");
+
+  const localizedSkillDesc = (code: string, name: string, fallback?: string): string | undefined => {
+    const normalizedCode = normalizeSkillKey(code);
+    const normalizedName = normalizeSkillKey(name);
+    const alias = SKILL_DESC_ALIASES[normalizedCode] ?? "";
+    const candidates = [normalizedCode, alias, normalizedName].filter(Boolean);
+    for (const key of candidates) {
+      const specific = t(`chat.skillDesc.${key}`);
+      if (specific !== `chat.skillDesc.${key}`) return specific;
+    }
+    if (fallback && lang !== "vi") return fallback;
+    const skill = toReadableSkillName(normalizedName || normalizedCode || name || code || "skill");
+    return trp("chat.skillDescFallback", `Use ${skill} in this chat session.`, { skill });
   };
 
   useEffect(() => {
@@ -1040,7 +1090,8 @@ export default function ChatPage() {
             activeSkills.map((skill: any, idx: number) => {
               const name = typeof skill === "string" ? skill : skill.name || skill.id || "Skill";
               const code = typeof skill === "object" && skill.code ? skill.code : name;
-              const desc = typeof skill === "object" && skill.description ? skill.description : undefined;
+              const rawDesc = typeof skill === "object" && skill.description ? skill.description : undefined;
+              const desc = localizedSkillDesc(code, name, rawDesc);
               const command = `/${code} `;
               const chipClass =
                 "inline-flex items-center rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 shadow-sm transition-colors hover:bg-red-50 touch-manipulation";

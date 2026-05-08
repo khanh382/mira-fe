@@ -68,6 +68,12 @@ type WorkflowModel = {
   edges: EdgeModel[];
 };
 
+type WorkflowGraphState = {
+  entryNodeId: string | null;
+  nodes: NodeModel[];
+  edges: EdgeModel[];
+};
+
 type RunNodeLog = {
   id: string;
   nodeName: string;
@@ -401,11 +407,17 @@ export default function WorkflowsPage() {
   const cloneBackupFileInputRef = useRef<HTMLInputElement | null>(null);
   type MobileTab = "list" | "canvas" | "inspector";
   const [mobileTab, setMobileTab] = useState<MobileTab>("list");
+  const [isCompactCanvasMobile, setIsCompactCanvasMobile] = useState(false);
   /** True when this page uses the real Fullscreen API on the canvas stage. */
   const [canvasApiFullscreen, setCanvasApiFullscreen] = useState(false);
   /** Fallback: hide side panels + expand in-page if requestFullscreen is unavailable or fails. */
   const [canvasLayoutExpanded, setCanvasLayoutExpanded] = useState(false);
   const canvasStageRef = useRef<HTMLDivElement | null>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
+  const selectedNodeClientKeyRef = useRef<string | null>(null);
+  const initialViewportAlignedWorkflowRef = useRef<string | null>(null);
+  const graphHistoryRef = useRef<Record<string, { past: WorkflowGraphState[]; future: WorkflowGraphState[] }>>({});
+  const dragStartGraphRef = useRef<WorkflowGraphState | null>(null);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toolOptions, setToolOptions] = useState<ToolOption[]>([]);
@@ -431,6 +443,21 @@ export default function WorkflowsPage() {
   });
   const [edgeDraft, setEdgeDraft] = useState<{ conditionExpr: string; priority: number; isDefault: boolean }>({ conditionExpr: "", priority: 5, isDefault: false });
   const [metaSnapshotById, setMetaSnapshotById] = useState<Record<string, WorkflowMetaSnapshot>>({});
+
+  useEffect(() => {
+    const syncCompactCanvas = () => {
+      if (typeof window === "undefined") return;
+      setIsCompactCanvasMobile(window.innerWidth < 768);
+    };
+    syncCompactCanvas();
+    window.addEventListener("resize", syncCompactCanvas);
+    return () => window.removeEventListener("resize", syncCompactCanvas);
+  }, []);
+
+  const canvasNodeWidth = isCompactCanvasMobile ? 176 : 220;
+  const canvasNodeHeight = isCompactCanvasMobile ? 70 : 88;
+  const canvasNodeCardWidthClass = isCompactCanvasMobile ? "w-[166px]" : "w-[210px]";
+  const canvasNodeCardPaddingClass = isCompactCanvasMobile ? "p-2" : "p-3";
 
   const toolNameByCode = useMemo(() => {
     const map: Record<string, string> = {};
@@ -508,6 +535,22 @@ export default function WorkflowsPage() {
     [selectedWorkflow, selectedNodeId],
   );
 
+  useEffect(() => {
+    if (!selectedWorkflow || !selectedNodeId) return;
+    const node = selectedWorkflow.nodes.find((n) => n.id === selectedNodeId);
+    if (node?.clientKey) selectedNodeClientKeyRef.current = node.clientKey;
+  }, [selectedWorkflow, selectedNodeId]);
+
+  useEffect(() => {
+    if (!selectedWorkflow || !selectedNodeId) return;
+    const stillExists = selectedWorkflow.nodes.some((n) => n.id === selectedNodeId);
+    if (stillExists) return;
+    const key = selectedNodeClientKeyRef.current;
+    if (!key) return;
+    const remapped = selectedWorkflow.nodes.find((n) => n.clientKey === key);
+    if (remapped) setSelectedNodeId(remapped.id);
+  }, [selectedWorkflow, selectedNodeId]);
+
   const hasNodeDraftChanges = useMemo(() => {
     if (!selectedNode) return false;
     return (
@@ -531,6 +574,67 @@ export default function WorkflowsPage() {
     () => selectedWorkflow?.edges.find((e) => e.id === selectedEdgeId) || null,
     [selectedWorkflow, selectedEdgeId],
   );
+  const canUndo = selectedWorkflow ? (graphHistoryRef.current[selectedWorkflow.id]?.past.length || 0) > 0 : false;
+  const canRedo = selectedWorkflow ? (graphHistoryRef.current[selectedWorkflow.id]?.future.length || 0) > 0 : false;
+
+  const focusCanvasToPrimaryNode = useCallback(() => {
+    if (!selectedWorkflow || selectedWorkflow.nodes.length === 0) return;
+    const wrapper = canvasWrapperRef.current;
+    if (!wrapper) return;
+
+    const NODE_W = isCompactCanvasMobile ? 166 : 210;
+    const NODE_H = canvasNodeHeight;
+    if (isCompactCanvasMobile) {
+      const minX = Math.min(...selectedWorkflow.nodes.map((n) => n.posX));
+      const maxX = Math.max(...selectedWorkflow.nodes.map((n) => n.posX + NODE_W));
+      const minY = Math.min(...selectedWorkflow.nodes.map((n) => n.posY));
+      const maxY = Math.max(...selectedWorkflow.nodes.map((n) => n.posY + NODE_H));
+      const contentW = Math.max(1, maxX - minX);
+      const contentH = Math.max(1, maxY - minY);
+
+      // Keep nodes visually tighter on mobile by fitting current graph bounds.
+      const horizontalPadding = 24;
+      const verticalPadding = 96;
+      const fitZoomX = (wrapper.clientWidth - horizontalPadding * 2) / contentW;
+      const fitZoomY = (wrapper.clientHeight - verticalPadding * 2) / contentH;
+      const nextZoom = Math.max(0.6, Math.min(1, Math.min(fitZoomX, fitZoomY)));
+
+      setZoom(nextZoom);
+      setPanOffset({
+        x: (wrapper.clientWidth - contentW * nextZoom) / 2 - minX * nextZoom,
+        y: (wrapper.clientHeight - contentH * nextZoom) / 2 - minY * nextZoom,
+      });
+      return;
+    }
+
+    const isDesktop = typeof window !== "undefined" && window.innerWidth >= 1024;
+    // On desktop, keep the first node clear of the left Workflow panel.
+    const LEFT_GUTTER = isDesktop ? 360 : 64;
+    const anchorNode =
+      (selectedWorkflow.entryNodeId && selectedWorkflow.nodes.find((n) => n.id === selectedWorkflow.entryNodeId)) ||
+      selectedWorkflow.nodes
+        .slice()
+        .sort((a, b) => (a.posX === b.posX ? a.posY - b.posY : a.posX - b.posX))[0];
+    if (!anchorNode) return;
+
+    const nextZoom = 1;
+    setZoom(nextZoom);
+    setPanOffset({
+      x: LEFT_GUTTER - anchorNode.posX * nextZoom,
+      y: (wrapper.clientHeight - NODE_H * nextZoom) / 2 - anchorNode.posY * nextZoom,
+    });
+  }, [selectedWorkflow, isCompactCanvasMobile, canvasNodeHeight]);
+
+  useEffect(() => {
+    if (!selectedWorkflowId) {
+      initialViewportAlignedWorkflowRef.current = null;
+      return;
+    }
+    if (!selectedWorkflow || selectedWorkflow.id !== selectedWorkflowId || selectedWorkflow.nodes.length === 0) return;
+    if (initialViewportAlignedWorkflowRef.current === selectedWorkflowId) return;
+    focusCanvasToPrimaryNode();
+    initialViewportAlignedWorkflowRef.current = selectedWorkflowId;
+  }, [selectedWorkflowId, selectedWorkflow, focusCanvasToPrimaryNode]);
 
   useEffect(() => {
     if (selectedEdge) {
@@ -948,9 +1052,83 @@ export default function WorkflowsPage() {
     }
   };
 
-  const upsertWorkflow = (next: WorkflowModel) => {
-    setWorkflows((prev) => prev.map((w) => (w.id === next.id ? next : w)));
+  const cloneGraphState = (graph: WorkflowGraphState): WorkflowGraphState => ({
+    entryNodeId: graph.entryNodeId,
+    nodes: graph.nodes.map((n) => ({ ...n })),
+    edges: graph.edges.map((e) => ({ ...e })),
+  });
+
+  const graphStateFromWorkflow = (wf: WorkflowModel): WorkflowGraphState =>
+    cloneGraphState({
+      entryNodeId: wf.entryNodeId,
+      nodes: wf.nodes,
+      edges: wf.edges,
+    });
+
+  const graphStateEquals = (a: WorkflowGraphState, b: WorkflowGraphState) =>
+    a.entryNodeId === b.entryNodeId &&
+    JSON.stringify(a.nodes) === JSON.stringify(b.nodes) &&
+    JSON.stringify(a.edges) === JSON.stringify(b.edges);
+
+  const recordGraphHistory = (workflowId: string, prevGraph: WorkflowGraphState, nextGraph: WorkflowGraphState) => {
+    if (graphStateEquals(prevGraph, nextGraph)) return;
+    const history = graphHistoryRef.current[workflowId] || { past: [], future: [] };
+    const lastPast = history.past[history.past.length - 1];
+    const normalizedPast =
+      lastPast && graphStateEquals(lastPast, prevGraph)
+        ? history.past
+        : [...history.past.slice(-49), cloneGraphState(prevGraph)];
+    graphHistoryRef.current[workflowId] = {
+      past: normalizedPast,
+      future: [],
+    };
   };
+
+  const upsertWorkflow = (next: WorkflowModel, opts?: { recordHistory?: boolean }) => {
+    const shouldRecordHistory = Boolean(opts?.recordHistory);
+    setWorkflows((prev) => {
+      const prevWorkflow = prev.find((w) => w.id === next.id);
+      if (shouldRecordHistory && prevWorkflow) {
+        recordGraphHistory(next.id, graphStateFromWorkflow(prevWorkflow), graphStateFromWorkflow(next));
+      }
+      return prev.map((w) => (w.id === next.id ? next : w));
+    });
+  };
+
+  const applyGraphStateToWorkflow = (wf: WorkflowModel, graph: WorkflowGraphState): WorkflowModel => ({
+    ...wf,
+    entryNodeId: graph.entryNodeId,
+    nodes: graph.nodes.map((n) => ({ ...n })),
+    edges: graph.edges.map((e) => ({ ...e })),
+  });
+
+  const undoGraphChange = useCallback(() => {
+    if (!selectedWorkflow) return;
+    const history = graphHistoryRef.current[selectedWorkflow.id];
+    if (!history || history.past.length === 0) return;
+    const currentGraph = graphStateFromWorkflow(selectedWorkflow);
+    const prevGraph = history.past[history.past.length - 1];
+    graphHistoryRef.current[selectedWorkflow.id] = {
+      past: history.past.slice(0, -1),
+      future: [cloneGraphState(currentGraph), ...history.future].slice(0, 50),
+    };
+    upsertWorkflow(applyGraphStateToWorkflow(selectedWorkflow, prevGraph));
+    setDirty(true);
+  }, [selectedWorkflow]);
+
+  const redoGraphChange = useCallback(() => {
+    if (!selectedWorkflow) return;
+    const history = graphHistoryRef.current[selectedWorkflow.id];
+    if (!history || history.future.length === 0) return;
+    const currentGraph = graphStateFromWorkflow(selectedWorkflow);
+    const nextGraph = history.future[0];
+    graphHistoryRef.current[selectedWorkflow.id] = {
+      past: [...history.past, cloneGraphState(currentGraph)].slice(-50),
+      future: history.future.slice(1),
+    };
+    upsertWorkflow(applyGraphStateToWorkflow(selectedWorkflow, nextGraph));
+    setDirty(true);
+  }, [selectedWorkflow]);
 
   const createEdge = (
     workflow: WorkflowModel,
@@ -1006,7 +1184,7 @@ export default function WorkflowsPage() {
       };
     }
 
-    upsertWorkflow(next);
+    upsertWorkflow(next, { recordHistory: true });
     setPendingConnect(null);
     setDirty(true);
   };
@@ -1196,6 +1374,99 @@ export default function WorkflowsPage() {
     if (!selectedWorkflow) return;
     const id = makeId();
     const isFirstNode = selectedWorkflow.nodes.length === 0;
+    const NODE_W = canvasNodeWidth;
+    const NODE_H = canvasNodeHeight;
+    const NODE_GAP = 36;
+    const EDGE_CLEARANCE = 22;
+
+    const rectIntersects = (
+      a: { x: number; y: number; w: number; h: number },
+      b: { x: number; y: number; w: number; h: number },
+      pad = 0,
+    ) =>
+      !(
+        a.x + a.w + pad <= b.x ||
+        b.x + b.w + pad <= a.x ||
+        a.y + a.h + pad <= b.y ||
+        b.y + b.h + pad <= a.y
+      );
+
+    const pointInRect = (
+      px: number,
+      py: number,
+      rect: { x: number; y: number; w: number; h: number },
+      pad = 0,
+    ) =>
+      px >= rect.x - pad &&
+      px <= rect.x + rect.w + pad &&
+      py >= rect.y - pad &&
+      py <= rect.y + rect.h + pad;
+
+    const edgeSamplePoints: Array<{ x: number; y: number }> = [];
+    selectedWorkflow.edges.forEach((edge) => {
+      const from = selectedWorkflow.nodes.find((n) => n.id === edge.fromNodeId);
+      const to = selectedWorkflow.nodes.find((n) => n.id === edge.toNodeId);
+      if (!from || !to) return;
+      const pts = getSmartEdgePoints(
+        { x: from.posX, y: from.posY, w: NODE_W, h: NODE_H },
+        { x: to.posX, y: to.posY, w: NODE_W, h: NODE_H },
+      );
+      for (let t = 0; t <= 1; t += 0.1) {
+        const mt = 1 - t;
+        const x =
+          mt * mt * mt * pts.x1 +
+          3 * mt * mt * t * pts.c1x +
+          3 * mt * t * t * pts.c2x +
+          t * t * t * pts.x2;
+        const y =
+          mt * mt * mt * pts.y1 +
+          3 * mt * mt * t * pts.c1y +
+          3 * mt * t * t * pts.c2y +
+          t * t * t * pts.y2;
+        edgeSamplePoints.push({ x, y });
+      }
+    });
+
+    const wrapper = canvasWrapperRef.current;
+    const viewportCenter = wrapper
+      ? {
+          x: (wrapper.clientWidth / 2 - panOffset.x) / zoom,
+          y: (wrapper.clientHeight / 2 - panOffset.y) / zoom,
+        }
+      : { x: 180 + selectedWorkflow.nodes.length * 36, y: 120 + selectedWorkflow.nodes.length * 18 };
+    const desired = { x: viewportCenter.x - NODE_W / 2, y: viewportCenter.y - NODE_H / 2 };
+
+    const existingRects = selectedWorkflow.nodes.map((n) => ({ x: n.posX, y: n.posY, w: NODE_W, h: NODE_H }));
+    const candidateOffsets: Array<[number, number]> = [[0, 0]];
+    for (let ring = 1; ring <= 12; ring += 1) {
+      for (let ox = -ring; ox <= ring; ox += 1) {
+        for (let oy = -ring; oy <= ring; oy += 1) {
+          if (Math.max(Math.abs(ox), Math.abs(oy)) !== ring) continue;
+          candidateOffsets.push([ox, oy]);
+        }
+      }
+    }
+
+    let nextPos = {
+      x: Math.round(desired.x),
+      y: Math.round(desired.y),
+    };
+
+    for (const [ox, oy] of candidateOffsets) {
+      const candidate = {
+        x: Math.round(desired.x + ox * (NODE_W + NODE_GAP)),
+        y: Math.round(desired.y + oy * (NODE_H + NODE_GAP)),
+        w: NODE_W,
+        h: NODE_H,
+      };
+      const overlapNode = existingRects.some((rect) => rectIntersects(candidate, rect, 18));
+      const overlapEdge = edgeSamplePoints.some((pt) => pointInRect(pt.x, pt.y, candidate, EDGE_CLEARANCE));
+      if (!overlapNode && !overlapEdge) {
+        nextPos = { x: candidate.x, y: candidate.y };
+        break;
+      }
+    }
+
     const next: WorkflowModel = {
       ...selectedWorkflow,
       entryNodeId: isFirstNode ? id : selectedWorkflow.entryNodeId,
@@ -1212,13 +1483,20 @@ export default function WorkflowsPage() {
           maxAttempts: 3,
           timeoutMs: 120000,
           outputSchema: null,
-          posX: 180 + selectedWorkflow.nodes.length * 36,
-          posY: 120 + selectedWorkflow.nodes.length * 18,
+          posX: nextPos.x,
+          posY: nextPos.y,
         },
       ],
     };
-    upsertWorkflow(next);
+    upsertWorkflow(next, { recordHistory: true });
     setSelectedNodeId(id);
+    setSelectedEdgeId(null);
+    if (wrapper) {
+      setPanOffset({
+        x: wrapper.clientWidth / 2 - (nextPos.x + NODE_W / 2) * zoom,
+        y: wrapper.clientHeight / 2 - (nextPos.y + NODE_H / 2) * zoom,
+      });
+    }
     setDirty(true);
   };
 
@@ -1232,7 +1510,7 @@ export default function WorkflowsPage() {
       edges: nextEdges,
       entryNodeId: selectedWorkflow.entryNodeId === nodeId ? nextNodes[0]?.id || null : selectedWorkflow.entryNodeId,
     };
-    upsertWorkflow(next);
+    upsertWorkflow(next, { recordHistory: true });
     if (selectedNodeId === nodeId) setSelectedNodeId(null);
     if (connectFromNodeId === nodeId) setConnectFromNodeId(null);
     setDirty(true);
@@ -1241,7 +1519,7 @@ export default function WorkflowsPage() {
   const onDeleteEdge = (edgeId: string) => {
     if (!selectedWorkflow) return;
     const next = { ...selectedWorkflow, edges: selectedWorkflow.edges.filter((e) => e.id !== edgeId) };
-    upsertWorkflow(next);
+    upsertWorkflow(next, { recordHistory: true });
     if (selectedEdgeId === edgeId) setSelectedEdgeId(null);
     setDirty(true);
   };
@@ -1274,6 +1552,16 @@ export default function WorkflowsPage() {
     upsertWorkflow(next);
     setDirty(true);
   };
+
+  const commitDragHistory = useCallback(() => {
+    if (!selectedWorkflow || !dragStartGraphRef.current) return;
+    recordGraphHistory(
+      selectedWorkflow.id,
+      dragStartGraphRef.current,
+      graphStateFromWorkflow(selectedWorkflow),
+    );
+    dragStartGraphRef.current = null;
+  }, [selectedWorkflow]);
 
   const onSaveGraph = async (workflowToSave?: WorkflowModel) => {
     const currentWorkflow = workflowToSave || selectedWorkflow;
@@ -1355,6 +1643,27 @@ export default function WorkflowsPage() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName.toLowerCase();
+        if (tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable) return;
+      }
+      const key = e.key.toLowerCase();
+      const hasMod = e.ctrlKey || e.metaKey;
+      if (hasMod && !e.altKey && key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redoGraphChange();
+        } else {
+          undoGraphChange();
+        }
+        return;
+      }
+      if (hasMod && !e.altKey && key === "y") {
+        e.preventDefault();
+        redoGraphChange();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "F5")) {
         e.preventDefault();
         if (dirty && !saving) {
@@ -1364,7 +1673,11 @@ export default function WorkflowsPage() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [dirty, saving]);
+  }, [dirty, saving, undoGraphChange, redoGraphChange]);
+
+  useEffect(() => {
+    dragStartGraphRef.current = null;
+  }, [selectedWorkflowId]);
 
   const onSaveMetadata = async () => {
     if (!selectedWorkflow) return;
@@ -1516,7 +1829,7 @@ export default function WorkflowsPage() {
           : n,
       ),
     };
-    upsertWorkflow(next);
+    upsertWorkflow(next, { recordHistory: true });
     setDirty(true);
     await onSaveGraph(next);
   };
@@ -1536,7 +1849,7 @@ export default function WorkflowsPage() {
           : ed,
       ),
     };
-    upsertWorkflow(next);
+    upsertWorkflow(next, { recordHistory: true });
     setDirty(true);
     await onSaveGraph(next);
   };
@@ -2126,6 +2439,32 @@ export default function WorkflowsPage() {
             <div className="flex min-w-0 items-center gap-1 min-[500px]:gap-2 sm:gap-2">
               <button
                 type="button"
+                onClick={undoGraphChange}
+                disabled={!canUndo}
+                className="inline-flex h-8 w-8 min-h-10 min-w-10 shrink-0 items-center justify-center rounded border border-red-300 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={tr("workflowsUi.undo", "Undo (Ctrl+Z)")}
+                title={tr("workflowsUi.undo", "Undo (Ctrl+Z)")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                  <path d="M9 8 4 12l5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M5 12h9a5 5 0 1 1 0 10h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={redoGraphChange}
+                disabled={!canRedo}
+                className="inline-flex h-8 w-8 min-h-10 min-w-10 shrink-0 items-center justify-center rounded border border-red-300 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={tr("workflowsUi.redo", "Redo (Ctrl+Y)")}
+                title={tr("workflowsUi.redo", "Redo (Ctrl+Y)")}
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                  <path d="m15 8 5 4-5 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M19 12h-9a5 5 0 1 0 0 10h2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <button
+                type="button"
                 onClick={() => void (toolbarOnlyExitLayout ? exitCanvasStageFullscreen() : requestCanvasStageFullscreen())}
                 className="inline-flex h-8 w-8 min-h-10 min-w-10 shrink-0 items-center justify-center rounded border border-red-300 bg-white text-red-700 hover:bg-red-50"
                 aria-label={
@@ -2165,6 +2504,17 @@ export default function WorkflowsPage() {
                 type="button"
                 onClick={() => {
                   if (!selectedWorkflow || selectedWorkflow.nodes.length === 0) return;
+                  if (
+                    typeof window !== "undefined" &&
+                    !window.confirm(
+                      tr(
+                        "workflowsUi.rearrangeConfirm",
+                        "Rearrange node positions automatically? This will move nodes on canvas.",
+                      ),
+                    )
+                  ) {
+                    return;
+                  }
                   
                   const edges = selectedWorkflow.edges;
                   const nodes = selectedWorkflow.nodes;
@@ -2235,13 +2585,19 @@ export default function WorkflowsPage() {
                   upsertWorkflow({
                     ...selectedWorkflow,
                     nodes: newNodes,
-                  });
+                  }, { recordHistory: true });
                   setDirty(true);
                 }}
                 disabled={!selectedWorkflow || selectedWorkflow.nodes.length === 0}
-                className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                title={tr("workflowsUi.rearrange", "Sắp xếp lại")}
+                aria-label={tr("workflowsUi.rearrange", "Sắp xếp lại")}
+                className="inline-flex h-8 w-8 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {tr("workflowsUi.rearrange", "Sắp xếp lại")}
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                  <path d="M4 7h12M4 12h10M4 17h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  <path d="m15 5 4 2-4 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="m13 15 4 2-4 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
               </button>
               {selectedNodeId && (
                 <div className="flex items-center gap-1">
@@ -2249,7 +2605,7 @@ export default function WorkflowsPage() {
                     className="rounded border border-red-200 bg-white px-2 py-1 text-xs text-zinc-700 break-all"
                     title={selectedNodeId}
                   >
-                    Node ID: {selectedNodeId}
+                    Node ID: {selectedNodeId.length > 16 ? `${selectedNodeId.slice(0, 8)}...${selectedNodeId.slice(-7)}` : selectedNodeId}
                   </span>
                   <button
                     type="button"
@@ -2298,9 +2654,13 @@ export default function WorkflowsPage() {
                 type="button"
                 onClick={onAddNode}
                 disabled={!selectedWorkflow}
-                className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                title={tr("workflowsUi.addNode", "Add Node")}
+                aria-label={tr("workflowsUi.addNode", "Add Node")}
+                className="inline-flex h-8 w-8 items-center justify-center rounded bg-red-100 text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {tr("workflowsUi.addNode", "Add Node")}
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+                  <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
               </button>
               {connectFromNodeId && (
                 <button
@@ -2318,6 +2678,7 @@ export default function WorkflowsPage() {
           <div className="relative min-h-0 w-full flex-1">
           <div
             id="canvas-wrapper"
+            ref={canvasWrapperRef}
             className={`pointer-events-auto absolute inset-0 z-0 h-full w-full overflow-hidden touch-none ${isPanning ? "cursor-grabbing" : "cursor-grab"}`}
             style={{ backgroundImage: "radial-gradient(#cbd5e1 1px, transparent 1px)", backgroundSize: `${24 * zoom}px ${24 * zoom}px`, backgroundPosition: `${panOffset.x}px ${panOffset.y}px` }}
             onTouchStart={(e) => {
@@ -2351,13 +2712,18 @@ export default function WorkflowsPage() {
             }}
             onPointerMove={onCanvasPointerMove}
             onPointerUp={(e) => {
+              commitDragHistory();
               setDragNodeId(null);
               setIsPanning(false);
               if (pendingConnect && e.target === e.currentTarget) {
                 setPendingConnect(null);
               }
             }}
-            onPointerLeave={() => { setDragNodeId(null); setIsPanning(false); }}
+            onPointerLeave={() => {
+              commitDragHistory();
+              setDragNodeId(null);
+              setIsPanning(false);
+            }}
             onPointerMoveCapture={(e) => {
               const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
               setMouseCanvasPos({ x: (e.clientX - rect.left - panOffset.x) / zoom, y: (e.clientY - rect.top - panOffset.y) / zoom });
@@ -2365,6 +2731,8 @@ export default function WorkflowsPage() {
             onPointerDown={(e) => {
               const target = e.target as HTMLElement;
               if (target.id === "canvas-wrapper" || target.id === "canvas-layer" || target.tagName.toLowerCase() === "svg") {
+                setSelectedNodeId(null);
+                setSelectedEdgeId(null);
                 setIsPanning(true);
                 setPanStartUserPos({ x: e.clientX, y: e.clientY });
                 setPanStartOffset(panOffset);
@@ -2374,8 +2742,7 @@ export default function WorkflowsPage() {
             onDoubleClick={(e) => {
               const target = e.target as HTMLElement;
               if (target.id === "canvas-wrapper" || target.id === "canvas-layer" || target.tagName.toLowerCase() === "svg") {
-                setZoom(1);
-                setPanOffset({ x: 0, y: 0 });
+                focusCanvasToPrimaryNode();
               }
             }}
           >
@@ -2384,12 +2751,42 @@ export default function WorkflowsPage() {
               className="pointer-events-none absolute inset-0 h-full w-full"
               style={{ overflow: "visible" }}
             >
+              <defs>
+                <marker
+                  id="workflow-edge-start-dot"
+                  viewBox="0 0 10 10"
+                  refX="5"
+                  refY="5"
+                  markerWidth="5"
+                  markerHeight="5"
+                  orient="auto-start-reverse"
+                >
+                  <circle cx="5" cy="5" r="3" fill="context-stroke" />
+                </marker>
+                <marker
+                  id="workflow-edge-arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
+                </marker>
+              </defs>
               {selectedWorkflow?.edges.map((edge) => {
                 const from = selectedWorkflow.nodes.find((n) => n.id === edge.fromNodeId);
                 const to = selectedWorkflow.nodes.find((n) => n.id === edge.toNodeId);
                 if (!from || !to) return null;
-                const pts = getSmartEdgePoints({ x: from.posX, y: from.posY, w: 220, h: 88 }, { x: to.posX, y: to.posY, w: 220, h: 88 });
+                const pts = getSmartEdgePoints(
+                  { x: from.posX, y: from.posY, w: canvasNodeWidth, h: canvasNodeHeight },
+                  { x: to.posX, y: to.posY, w: canvasNodeWidth, h: canvasNodeHeight },
+                );
                 const active = selectedEdgeId === edge.id;
+                const isConnectedToSelectedNode = selectedNodeId
+                  ? edge.fromNodeId === selectedNodeId || edge.toNodeId === selectedNodeId
+                  : true;
                 const stroke = edge.isDefault ? "#94a3b8" : "#22c55e";
                 return (
                   <g key={edge.id}>
@@ -2397,7 +2794,10 @@ export default function WorkflowsPage() {
                       d={`M ${pts.x1} ${pts.y1} C ${pts.c1x} ${pts.c1y}, ${pts.c2x} ${pts.c2y}, ${pts.x2} ${pts.y2}`}
                       fill="none"
                       stroke={active ? "#dc2626" : stroke}
-                      strokeWidth={active ? 3 : 2}
+                      strokeWidth={active ? (isCompactCanvasMobile ? 2.5 : 3) : isCompactCanvasMobile ? 1.5 : 2}
+                      opacity={isConnectedToSelectedNode ? 1 : 0.16}
+                      markerStart="url(#workflow-edge-start-dot)"
+                      markerEnd="url(#workflow-edge-arrow)"
                     />
                   </g>
                 );
@@ -2405,7 +2805,10 @@ export default function WorkflowsPage() {
               {pendingConnect && (() => {
                 const sourceNode = getNodeById(pendingConnect.sourceId);
                 if (!sourceNode) return null;
-                const pts = getSmartEdgePoints({ x: sourceNode.posX, y: sourceNode.posY, w: 220, h: 88 }, { x: mouseCanvasPos.x, y: mouseCanvasPos.y, w: 0, h: 0 });
+                const pts = getSmartEdgePoints(
+                  { x: sourceNode.posX, y: sourceNode.posY, w: canvasNodeWidth, h: canvasNodeHeight },
+                  { x: mouseCanvasPos.x, y: mouseCanvasPos.y, w: 0, h: 0 },
+                );
                 return (
                   <path
                     d={`M ${pts.x1} ${pts.y1} C ${pts.c1x} ${pts.c1y}, ${pts.c2x} ${pts.c2y}, ${pts.x2} ${pts.y2}`}
@@ -2422,9 +2825,15 @@ export default function WorkflowsPage() {
               const from = selectedWorkflow.nodes.find((n) => n.id === edge.fromNodeId);
               const to = selectedWorkflow.nodes.find((n) => n.id === edge.toNodeId);
               if (!from || !to) return null;
-              const pts = getSmartEdgePoints({ x: from.posX, y: from.posY, w: 220, h: 88 }, { x: to.posX, y: to.posY, w: 220, h: 88 });
+              const pts = getSmartEdgePoints(
+                { x: from.posX, y: from.posY, w: canvasNodeWidth, h: canvasNodeHeight },
+                { x: to.posX, y: to.posY, w: canvasNodeWidth, h: canvasNodeHeight },
+              );
               const labelX = (pts.x1 + pts.x2) / 2;
               const labelY = (pts.y1 + pts.y2) / 2;
+              const isConnectedToSelectedNode = selectedNodeId
+                ? edge.fromNodeId === selectedNodeId || edge.toNodeId === selectedNodeId
+                : true;
               return (
                 <React.Fragment key={`edge-ui-${edge.id}`}>
                   <button
@@ -2436,14 +2845,14 @@ export default function WorkflowsPage() {
                     className={`absolute rounded px-1.5 py-0.5 text-[10px] ${
                       edge.isDefault ? "bg-zinc-200 text-zinc-700" : "bg-green-200 text-green-800"
                     }`}
-                    style={{ left: labelX - 22, top: labelY - 12 }}
+                    style={{ left: labelX - 22, top: labelY - 12, opacity: isConnectedToSelectedNode ? 1 : 0.25 }}
                   >
-                    {edge.isDefault ? tr("workflowsUi.default", "default") : tr("workflowsUi.if", "if")} #{flowNumbering.edgeOrderIndex[edge.id] || 1}
+                    #{flowNumbering.edgeOrderIndex[edge.id] || 1}
                   </button>
                   <button
                     type="button"
                     className="absolute h-3 w-3 rounded-full border border-red-300 bg-white"
-                    style={{ left: pts.x1 - 6, top: pts.y1 - 6 }}
+                    style={{ left: pts.x1 - 6, top: pts.y1 - 6, opacity: isConnectedToSelectedNode ? 1 : 0.2 }}
                     title={tr("workflowsUi.reconnectFrom", "Reconnect from")}
                     onPointerDown={(e) => {
                       e.stopPropagation();
@@ -2456,8 +2865,8 @@ export default function WorkflowsPage() {
                   />
                   <button
                     type="button"
-                    className="absolute h-3 w-3 rounded-full border border-red-300 bg-white"
-                    style={{ left: pts.x2 - 6, top: pts.y2 - 6 }}
+                    className="absolute h-3 w-3 appearance-none rounded-full border-0 bg-transparent p-0 opacity-0 hover:border hover:border-red-300 hover:bg-white/90 hover:opacity-100 focus:opacity-100 focus:outline-none focus:ring-0"
+                    style={{ left: pts.x2 - 6, top: pts.y2 - 6, opacity: isConnectedToSelectedNode ? undefined : 0 }}
                     title={tr("workflowsUi.reconnectTo", "Reconnect to")}
                     onPointerDown={(e) => {
                       e.stopPropagation();
@@ -2492,17 +2901,24 @@ export default function WorkflowsPage() {
               return (
                 <div
                   key={node.id}
-                  className={`absolute w-[210px] rounded-xl border bg-white p-3 shadow-sm ${
-                    runtimeClass
+                  className={`absolute ${canvasNodeCardWidthClass} rounded-xl border bg-white ${canvasNodeCardPaddingClass} shadow-sm ${
+                    active
+                      ? "!border-red-600 outline outline-1 outline-red-500"
+                      : runtimeClass
                       ? runtimeClass
                       : isUnreachable
                         ? "border-amber-500 bg-amber-50/60"
-                        : active
-                          ? "border-red-600"
-                          : "border-red-200"
+                        : "border-red-200"
                   }`}
                   style={{ left: node.posX, top: node.posY }}
                   title={runtimeErr || undefined}
+                  onClick={(e) => {
+                    const target = e.target as HTMLElement;
+                    const interactive = target.closest("button, input, textarea, select, a");
+                    if (interactive) return;
+                    setSelectedNodeId(node.id);
+                    setSelectedEdgeId(null);
+                  }}
                   onMouseUp={(e) => {
                     if (!pendingConnect) return;
                     e.stopPropagation();
@@ -2513,6 +2929,7 @@ export default function WorkflowsPage() {
                     className="cursor-move"
                     onPointerDown={(e) => {
                       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                      dragStartGraphRef.current = graphStateFromWorkflow(selectedWorkflow);
                       setDragNodeId(node.id);
                       setDragOffset({ x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom });
                       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -2524,11 +2941,11 @@ export default function WorkflowsPage() {
                       setSelectedEdgeId(null);
                     }}
                   >
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <p className="truncate text-xs font-semibold text-[rgb(173,8,8)]">{node.name}</p>
+                    <div className={`mb-1 flex items-center justify-between ${isCompactCanvasMobile ? "gap-1" : "gap-2"}`}>
+                      <p className={`truncate font-semibold text-[rgb(173,8,8)] ${isCompactCanvasMobile ? "text-[11px]" : "text-xs"}`}>{node.name}</p>
                       <div className="flex items-center gap-1">
                         <span
-                          className={`rounded px-1.5 py-0.5 text-[10px] ${
+                          className={`rounded ${isCompactCanvasMobile ? "px-1 py-0 text-[9px]" : "px-1.5 py-0.5 text-[10px]"} ${
                             isUnreachable ? "bg-amber-200 text-amber-800" : "bg-red-100 text-red-700"
                           }`}
                           title={
@@ -2541,7 +2958,7 @@ export default function WorkflowsPage() {
                         </span>
                         {runtime && (
                           <span
-                            className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded ${
+                            className={`inline-flex ${isCompactCanvasMobile ? "h-4 w-4" : "h-5 w-5"} shrink-0 items-center justify-center rounded ${
                               runtime === "running"
                                 ? "bg-blue-100 text-blue-700"
                                 : runtime === "succeeded"
@@ -2566,28 +2983,34 @@ export default function WorkflowsPage() {
                             }
                           >
                             {runtime === "running" ? (
-                              <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={2.25} aria-hidden />
+                              <RefreshCw className={`${isCompactCanvasMobile ? "h-3 w-3" : "h-3.5 w-3.5"} shrink-0 animate-spin`} strokeWidth={2.25} aria-hidden />
                             ) : runtime === "succeeded" ? (
-                              <Check className="h-3.5 w-3.5 shrink-0 stroke-[2.75]" aria-hidden />
+                              <Check className={`${isCompactCanvasMobile ? "h-3 w-3" : "h-3.5 w-3.5"} shrink-0 stroke-[2.75]`} aria-hidden />
                             ) : (
-                              <AlertCircle className="h-3.5 w-3.5 shrink-0 stroke-[2.25]" aria-hidden />
+                              <AlertCircle className={`${isCompactCanvasMobile ? "h-3 w-3" : "h-3.5 w-3.5"} shrink-0 stroke-[2.25]`} aria-hidden />
                             )}
                           </span>
                         )}
-                        {isEntry && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700">{tr("workflowsUi.entry", "entry")}</span>}
+                        {isEntry && (
+                          <span className={`rounded bg-red-100 text-red-700 ${isCompactCanvasMobile ? "px-1 py-0 text-[9px]" : "px-1.5 py-0.5 text-[10px]"}`}>
+                            {tr("workflowsUi.entry", "entry")}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <p className="text-[11px] text-zinc-600">
+                    <p className={`${isCompactCanvasMobile ? "text-[10px]" : "text-[11px]"} text-zinc-600`}>
                       {hasTool
                         ? `${tr("workflowsUi.tool", "Tool")}: ${toolNameByCode[node.toolCode || ""] || node.toolCode}`
                         : tr("workflowsUi.llmDirect", "LLM Direct")}
                     </p>
-                    <p className="mt-1 line-clamp-2 text-[11px] text-zinc-500">{node.promptTemplate || tr("workflowsUi.emptyPrompt", "(empty prompt)")}</p>
+                    <p className={`mt-1 line-clamp-2 ${isCompactCanvasMobile ? "text-[10px]" : "text-[11px]"} text-zinc-500`}>
+                      {node.promptTemplate || tr("workflowsUi.emptyPrompt", "(empty prompt)")}
+                    </p>
                   </div>
 
-                  <div className="mt-2 flex items-center justify-between">
+                  <div className={`${isCompactCanvasMobile ? "mt-1.5" : "mt-2"} flex items-center justify-between`}>
                     {isEntry ? (
-                      <span className="h-5 w-5" />
+                      <span className={isCompactCanvasMobile ? "h-4 w-4" : "h-5 w-5"} />
                     ) : (
                       <button
                         type="button"
@@ -2600,11 +3023,11 @@ export default function WorkflowsPage() {
                           if (!selectedWorkflow) return;
                           if (!connectFromNodeId || connectFromNodeId === node.id) return;
                           const next = createEdge(selectedWorkflow, connectFromNodeId, node.id);
-                          upsertWorkflow(next);
+                          upsertWorkflow(next, { recordHistory: true });
                           setConnectFromNodeId(null);
                           setDirty(true);
                         }}
-                        className="h-5 w-5 rounded-full border border-red-300 bg-white text-[10px] text-red-700"
+                        className={`${isCompactCanvasMobile ? "h-4 w-4 text-[9px]" : "h-5 w-5 text-[10px]"} rounded-full border border-red-300 bg-white text-red-700`}
                       >
                         {tr("workflowsUi.in", "in")}
                       </button>
@@ -2621,7 +3044,7 @@ export default function WorkflowsPage() {
                           reconnectEnd: null,
                         });
                       }}
-                      className={`h-5 w-5 rounded-full border text-[10px] ${
+                      className={`${isCompactCanvasMobile ? "h-4 w-4 text-[9px]" : "h-5 w-5 text-[10px]"} rounded-full border ${
                         isConnectFrom
                           ? "border-amber-600 bg-amber-200 text-amber-800"
                           : "border-red-300 bg-white text-red-700"
@@ -2747,12 +3170,18 @@ export default function WorkflowsPage() {
           {selectedWorkflow && selectedEdge && (
             <div className="space-y-2 rounded-lg border border-red-200 bg-red-50/50 p-2">
               <p className="text-xs font-semibold text-red-700">{tr("workflowsUi.edgeConfig", "Edge Config")}</p>
-              <label className="text-xs text-zinc-600">{tr("workflowsUi.conditionExpr", "conditionExpr")}</label>
+              <label className="text-xs text-zinc-600">{tr("workflowsUi.conditionExpr", "Run condition (conditionExpr)")}</label>
               <input
                 value={edgeDraft.conditionExpr}
                 onChange={(e) => setEdgeDraft((prev) => ({ ...prev, conditionExpr: e.target.value }))}
                 className="w-full rounded border border-red-300 px-2 py-1 text-xs"
               />
+              <p className="text-[11px] leading-snug text-zinc-500">
+                {tr(
+                  "workflowsUi.conditionExprHint",
+                  "Leave empty to skip condition check. Fill this when you only want this branch to run in a specific case.",
+                )}
+              </p>
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold text-zinc-700">{tr("workflowsUi.maxRetries", "Số lần thử lại tối đa (nếu lỗi)")}</label>
                 <div className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{edgeDraft.priority} lần</div>
@@ -2772,8 +3201,14 @@ export default function WorkflowsPage() {
                   checked={edgeDraft.isDefault}
                   onChange={(e) => setEdgeDraft((prev) => ({ ...prev, isDefault: e.target.checked }))}
                 />
-                {tr("workflowsUi.isDefault", "isDefault")}
+                {tr("workflowsUi.isDefault", "Default branch (isDefault)")}
               </label>
+              <p className="text-[11px] leading-snug text-zinc-500">
+                {tr(
+                  "workflowsUi.isDefaultHint",
+                  "When no condition matches, this branch is used as fallback. Each node should have at most one default branch.",
+                )}
+              </p>
               <button
                 type="button"
                 onClick={() => void onSaveEdgeConfig()}
@@ -2793,7 +3228,7 @@ export default function WorkflowsPage() {
           )}
 
           <div className="space-y-2 rounded-lg border border-red-200 p-2">
-            {!selectedNode && (
+            {!selectedNode && !selectedEdge && (
               <>
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-semibold text-[rgb(173,8,8)]">
@@ -2827,7 +3262,7 @@ export default function WorkflowsPage() {
                 </button>
               </>
             )}
-            {!selectedNode && (
+            {!selectedNode && !selectedEdge && (
               <button
                 type="button"
                 onClick={onRunWorkflow}
@@ -2853,7 +3288,7 @@ export default function WorkflowsPage() {
                 <span className="font-medium uppercase">{activeRunStatus}</span>
               </div>
             )}
-            {!selectedNode && (
+            {!selectedNode && !selectedEdge && (
               <div className="rounded border border-red-200 bg-red-50/50 p-2">
                 <div className="mb-1 flex items-center justify-between">
                   <p className="text-xs font-semibold text-red-700">
@@ -2954,7 +3389,7 @@ export default function WorkflowsPage() {
                 )}
               </div>
             )}
-            {run && (
+            {!selectedEdge && run && (
               <div className="space-y-2">
                 <div className="flex justify-end">
                   <button

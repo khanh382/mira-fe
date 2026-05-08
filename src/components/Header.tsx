@@ -13,11 +13,12 @@ export default function Header() {
         <label className="text-sm text-red-100">{t("common.language")}:</label>
         <select
           value={lang}
-          onChange={(e) => setLang(e.target.value as "en" | "vi")}
+          onChange={(e) => setLang(e.target.value as typeof lang)}
           className="rounded border border-red-300 bg-white px-2 py-1 text-sm text-red-700"
         >
           <option value="en">{t("common.english")}</option>
           <option value="vi">{t("common.vietnamese")}</option>
+          <option value="kr">{t("common.korean")}</option>
         </select>
       </div>
     </div>
