@@ -190,6 +190,15 @@ function filesFromClipboard(data: DataTransfer | null): File[] {
   return out;
 }
 
+type ChatSkillItem = {
+  code: string;
+  name: string;
+  displayName?: string | null;
+  description?: string;
+  isActive?: boolean;
+  isDisplay?: boolean;
+};
+
 export default function ChatPage() {
   const { t, lang } = useLang();
   const narrowComposer = useSyncExternalStore(
@@ -285,6 +294,15 @@ export default function ChatPage() {
     if (fallback && lang !== "vi") return fallback;
     const skill = toReadableSkillName(normalizedName || normalizedCode || name || code || "skill");
     return trp("chat.skillDescFallback", `Use ${skill} in this chat session.`, { skill });
+  };
+
+  const localizedSkillLabel = (code: string, displayName?: string | null, fallbackName?: string): string => {
+    const normalizedCode = normalizeSkillKey(code);
+    const fromI18n = t(`chat.skillName.${normalizedCode}`);
+    if (fromI18n !== `chat.skillName.${normalizedCode}`) return fromI18n;
+    if (displayName && displayName.trim()) return displayName.trim();
+    if (fallbackName && fallbackName.trim()) return fallbackName.trim();
+    return toReadableSkillName(normalizedCode || code || "skill");
   };
 
   useEffect(() => {
@@ -1025,17 +1043,49 @@ export default function ChatPage() {
       setLoadingHistory(false);
     }
   };
-  const activeSkills = useMemo(() => {
+  const activeSkills = useMemo<ChatSkillItem[]>(() => {
     if (!skillsData) return [];
-    if (Array.isArray(skillsData)) return skillsData;
-    if (Array.isArray(skillsData.skills)) return skillsData.skills;
-    if (Array.isArray(skillsData.data)) return skillsData.data;
-    if (Array.isArray(skillsData.items)) return skillsData.items;
-    if (typeof skillsData === "object" && skillsData !== null) {
-      if (skillsData.installed) return skillsData.installed;
-      return Object.keys(skillsData).map((k) => ({ name: k }));
-    }
-    return [];
+
+    const source: any[] = (() => {
+      if (Array.isArray(skillsData)) return skillsData;
+      if (Array.isArray(skillsData.skills)) return skillsData.skills;
+      if (Array.isArray(skillsData.data)) return skillsData.data;
+      if (Array.isArray(skillsData.items)) return skillsData.items;
+      if (typeof skillsData === "object" && skillsData !== null) {
+        if (Array.isArray(skillsData.installed)) return skillsData.installed;
+        return Object.keys(skillsData).map((k) => ({ code: k, name: k }));
+      }
+      return [];
+    })();
+
+    const normalized = source
+      .map((skill: any): ChatSkillItem | null => {
+        if (typeof skill === "string") {
+          return { code: skill, name: skill, isActive: true, isDisplay: true };
+        }
+        if (!skill || typeof skill !== "object") return null;
+        const code = String(skill.skillCode ?? skill.code ?? skill.id ?? "").trim();
+        const name = String(skill.skillName ?? skill.name ?? (code || "Skill")).trim();
+        if (!code) return null;
+        return {
+          code,
+          name: name || code,
+          displayName: skill.displayName ?? null,
+          description: typeof skill.description === "string" ? skill.description : undefined,
+          isActive: skill.isActive,
+          isDisplay: skill.isDisplay,
+        };
+      })
+      .filter((v): v is ChatSkillItem => Boolean(v));
+
+    // API mới có cờ isDisplay/isActive: chỉ hiện skill đang active + được phép hiển thị.
+    const visible = normalized.filter((s) => {
+      const activeOk = s.isActive !== false;
+      const displayOk = s.isDisplay !== false;
+      return activeOk && displayOk;
+    });
+
+    return visible;
   }, [skillsData]);
 
 
@@ -1046,22 +1096,28 @@ export default function ChatPage() {
           <h2 className="text-sm font-bold text-[rgb(173,8,8)]">{tr("chat.status", "Agent Information")}</h2>
           <div className="flex items-center gap-1.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span>
-            {statusData?.status === "ok" ? "Online" : "Active"}
+            {statusData?.status === "ok"
+              ? tr("chat.statusOnline", "Online")
+              : tr("chat.statusActive", "Active")}
           </div>
         </div>
 
         <div className="flex flex-col gap-3 text-xs text-zinc-600">
           <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
-            <span className="font-medium text-zinc-500">Cốt lõi</span>
+            <span className="font-medium text-zinc-500">{tr("chat.statusCore", "Core")}</span>
             <span className="font-semibold text-zinc-800">{statusData?.name || "Mira Multi-Agent"}</span>
           </div>
           <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
-            <span className="font-medium text-zinc-500">Phiên bản</span>
+            <span className="font-medium text-zinc-500">{tr("chat.statusVersion", "Version")}</span>
             <span className="font-semibold text-zinc-800">{statusData?.version || "1.0.0"}</span>
           </div>
           <div className="flex items-center justify-between rounded-lg border border-red-50 bg-white/50 p-2">
-            <span className="font-medium text-zinc-500">Bảo mật</span>
-            <span className="font-semibold text-zinc-800">{statusData?.auth === "required" ? "Đã xác thực" : "Chế độ mở"}</span>
+            <span className="font-medium text-zinc-500">{tr("chat.statusSecurity", "Security")}</span>
+            <span className="font-semibold text-zinc-800">
+              {statusData?.auth === "required"
+                ? tr("chat.statusAuthRequired", "Authenticated")
+                : tr("chat.statusAuthOpen", "Open mode")}
+            </span>
           </div>
         </div>
       </section>
@@ -1087,11 +1143,11 @@ export default function ChatPage() {
 
         <div className="flex flex-wrap gap-2 overflow-y-auto">
           {activeSkills.length > 0 ? (
-            activeSkills.map((skill: any, idx: number) => {
-              const name = typeof skill === "string" ? skill : skill.name || skill.id || "Skill";
-              const code = typeof skill === "object" && skill.code ? skill.code : name;
-              const rawDesc = typeof skill === "object" && skill.description ? skill.description : undefined;
-              const desc = localizedSkillDesc(code, name, rawDesc);
+            activeSkills.map((skill, idx: number) => {
+              const code = skill.code;
+              const name = skill.name || code || "Skill";
+              const label = localizedSkillLabel(code, skill.displayName, name);
+              const desc = localizedSkillDesc(code, name, skill.description);
               const command = `/${code} `;
               const chipClass =
                 "inline-flex items-center rounded-lg border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 shadow-sm transition-colors hover:bg-red-50 touch-manipulation";
@@ -1110,7 +1166,7 @@ export default function ChatPage() {
                     }}
                     className={`${chipClass} cursor-pointer`}
                   >
-                    {name}
+                    {label}
                   </button>
                 );
               }
@@ -1125,7 +1181,7 @@ export default function ChatPage() {
                   }}
                   className={`${chipClass} cursor-grab active:cursor-grabbing`}
                 >
-                  {name}
+                  {label}
                 </span>
               );
             })
