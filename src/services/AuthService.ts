@@ -9,13 +9,6 @@ interface ApiResponse<T> {
 }
 export type { ApiResponse };
 
-export interface LoginStep1Data {
-  message: string;
-  emailSent: boolean;
-  retryAfterSec?: number;
-  expiresAt?: string;
-}
-
 export interface AuthUser {
   uid: number;
   identifier: string;
@@ -33,17 +26,46 @@ export interface AuthUser {
   updateAt?: string;
 }
 
-export const requestLoginCode = async (payload: {
+/** Shared fields for email-code style responses (forgot-password, etc.) */
+export interface EmailCodeChallengeData {
+  message: string;
+  emailSent: boolean;
+  retryAfterSec?: number;
+  expiresAt?: string;
+}
+
+/** POST /users/login — branch on `emailCodeRequired` (do not hardcode server env on FE). */
+export interface LoginResponseData {
+  emailCodeRequired: boolean;
+  message: string;
+  /** Present when emailCodeRequired is false (cookies already set). */
+  user?: AuthUser;
+  /** Present when emailCodeRequired is true. */
+  emailSent?: boolean;
+  codeDeliveryEmailMasked?: string;
+  loginCodeReusedFromDb?: boolean;
+  emailSkippedDueToResendCooldown?: boolean;
+  retryAfterSec?: number;
+  expiresAt?: string;
+}
+
+/** @deprecated Prefer LoginResponseData or EmailCodeChallengeData */
+export type LoginStep1Data = EmailCodeChallengeData;
+
+export const loginWithCredentials = async (payload: {
   key: LoginCredentialKey;
   value: string;
   password: string;
 }) => {
-  const response = await axiosClient.post<ApiResponse<LoginStep1Data>>("/users/login", {
+  const response = await axiosClient.post<ApiResponse<LoginResponseData>>("/users/login", {
     [payload.key]: payload.value,
     password: payload.password,
   });
   return response.data;
 };
+
+/** @deprecated Use loginWithCredentials */
+export const requestLoginCode = loginWithCredentials;
 
 export const verifyLoginCode = async (payload: {
   key: LoginCredentialKey;
@@ -69,7 +91,7 @@ export const forgotPassword = async (payload: {
   key: LoginCredentialKey;
   value: string;
 }) => {
-  const response = await axiosClient.post<ApiResponse<LoginStep1Data>>("/users/forgot-password", {
+  const response = await axiosClient.post<ApiResponse<EmailCodeChallengeData>>("/users/forgot-password", {
     [payload.key]: payload.value,
   });
   return response.data;

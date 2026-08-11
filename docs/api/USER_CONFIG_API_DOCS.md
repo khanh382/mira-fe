@@ -6,6 +6,10 @@ Tài liệu mô tả REST API cấu hình **riêng theo user** (bảng `user_con
 
 - **Base path:** `/api/v1/user-config` (toàn app có prefix `api/v1`).
 - **Auth:** bắt buộc JWT — header `Authorization: Bearer <access_token>` hoặc cookie access token (cùng cơ chế với các API có `JwtAuthGuard`).
+- **Cách lấy session (FE):** xem [`USERS_API_DOCS.md`](./USERS_API_DOCS.md) — `POST /users/login`.
+  - Server env `LOGIN_EMAIL_CODE_REQUIRED=false` → login 1 bước (cookie ngay, `data.emailCodeRequired: false`).
+  - Mặc định / `true` → cần thêm `POST /users/verify-login` khi `data.emailCodeRequired: true`.
+  - Gọi API này với `credentials: 'include'` sau khi đã có cookie.
 - **Phạm vi:** mỗi user đăng nhập chỉ sửa **cấu hình của chính mình** (`ucof_user_id` = `req.user.uid`) — gồm cả **owner** (không cần quyền `owner` như API global `config`). Owner vẫn có thể vừa dùng **`POST /api/v1/config/set`** (global) vừa **`POST /api/v1/user-config/set`** (key riêng theo `uid`).
 - **Sau `POST /user-config/set` thành công:** backend **reset ngay** TTL fallback 3 phút (nhóm credential) **và** `ProvidersService.clearProviderKeyCache()` — các request sau không phải chờ hết 3 phút cũng đọc lại key user.
 

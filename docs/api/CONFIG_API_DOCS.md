@@ -5,7 +5,7 @@ Tai lieu mo ta API module `config`.
 ## Tong quan
 
 - Base route (app): **`/api/v1/config`** (prefix toàn cục `api/v1`).
-- Auth: bat buoc JWT
+- Auth: bat buoc JWT (cookie / Bearer — sau khi login theo [`USERS_API_DOCS.md`](./USERS_API_DOCS.md); có thể 1 bước nếu server `LOGIN_EMAIL_CODE_REQUIRED=false`).
 - Phan quyen: chi `owner` duoc truy cap (`Only owner can manage config`)
 - Endpoint: `GET /view`, `POST /set`, **`GET /get-time-now`** (đồng hồ theo múi giờ scheduler).
 - Chuẩn hoá thời gian user-input → UTC trước khi lưu `timestamptz`: **`GlobalConfigService.normalizeUserTemporalToUtcForDb`** — xem **`docs/system-flows/SCHEDULER_DATETIME_PERSISTENCE.md`**.

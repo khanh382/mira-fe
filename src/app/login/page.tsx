@@ -2,7 +2,7 @@
 
 import React, { FormEvent, useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { requestLoginCode, verifyLoginCode } from "@/services/AuthService";
+import { loginWithCredentials, verifyLoginCode } from "@/services/AuthService";
 import { useAuth } from "@/hooks/useAuth";
 import { useLang } from "@/lang";
 
@@ -23,6 +23,7 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [retryAfterSec, setRetryAfterSec] = useState<number | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [maskedEmail, setMaskedEmail] = useState<string | null>(null);
 
   const canSubmitStep1 = useMemo(() => {
     return credentialValue.trim().length > 0 && password.trim().length >= 6;
@@ -48,7 +49,12 @@ export default function LoginPage() {
     return () => clearInterval(timer);
   }, [step]);
 
-  const onRequestCode = async (e: FormEvent) => {
+  const completeLogin = (user?: Parameters<typeof login>[0]) => {
+    login(user);
+    router.push("/chat");
+  };
+
+  const onSubmitCredentials = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmitStep1 || submitting) return;
 
@@ -57,19 +63,28 @@ export default function LoginPage() {
     setMessage("");
 
     try {
-      const response = await requestLoginCode({
+      const response = await loginWithCredentials({
         key: credentialType,
         value: credentialValue.trim(),
         password: password.trim(),
       });
 
+      const data = response.data;
+
+      // Branch on server response — do not hardcode LOGIN_EMAIL_CODE_REQUIRED on FE
+      if (data.emailCodeRequired === false) {
+        completeLogin(data.user ?? null);
+        return;
+      }
+
       setStep(2);
-      setMessage(response.data.message || t("login.requestCodeSuccess"));
-      setRetryAfterSec(response.data.retryAfterSec ?? null);
-      setExpiresAt(response.data.expiresAt ?? null);
+      setMessage(data.message || t("login.requestCodeSuccess"));
+      setRetryAfterSec(data.retryAfterSec ?? null);
+      setExpiresAt(data.expiresAt ?? null);
+      setMaskedEmail(data.codeDeliveryEmailMasked ?? null);
     } catch (error: any) {
       const apiMessage =
-        error?.response?.data?.message || t("login.requestCodeError");
+        error?.response?.data?.message || t("login.loginError");
       setErrorMessage(apiMessage);
     } finally {
       setSubmitting(false);
@@ -85,14 +100,13 @@ export default function LoginPage() {
     setMessage("");
 
     try {
-      await verifyLoginCode({
+      const response = await verifyLoginCode({
         key: credentialType,
         value: credentialValue.trim(),
         code: code.trim(),
       });
 
-      login();
-      router.push("/chat");
+      completeLogin(response.data.user ?? null);
     } catch (error: any) {
       const apiMessage =
         error?.response?.data?.message || t("login.verifyCodeError");
@@ -100,6 +114,16 @@ export default function LoginPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const goBackToCredentials = () => {
+    setStep(1);
+    setCode("");
+    setErrorMessage("");
+    setMessage("");
+    setMaskedEmail(null);
+    setRetryAfterSec(null);
+    setExpiresAt(null);
   };
 
   return (
@@ -164,9 +188,11 @@ export default function LoginPage() {
             </div>
 
             <div className="mb-10 text-center md:text-left">
-              <h2 className="text-3xl font-bold tracking-tight text-zinc-900">{t("login.title")}</h2>
+              <h2 className="text-3xl font-bold tracking-tight text-zinc-900">
+                {step === 1 ? t("login.title") : t("login.verifyTitle")}
+              </h2>
               <p className="mt-2 text-sm text-zinc-500">
-                {t("login.subtitle", { step })}
+                {step === 1 ? t("login.subtitle") : t("login.verifySubtitle")}
               </p>
             </div>
 
@@ -183,7 +209,7 @@ export default function LoginPage() {
             )}
 
             {step === 1 ? (
-              <form className="space-y-5" onSubmit={onRequestCode}>
+              <form className="space-y-5" onSubmit={onSubmitCredentials}>
                 <div>
                   <label className="mb-2 block text-sm font-medium text-zinc-700">{t("login.credentialType")}</label>
                   <select
@@ -227,7 +253,7 @@ export default function LoginPage() {
                     className="group relative flex w-full items-center justify-center overflow-hidden rounded-xl bg-zinc-900 px-4 py-4 text-sm font-semibold text-white transition-all hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      {submitting ? t("login.sendingCode") : t("login.sendCode")}
+                      {submitting ? t("login.signingIn") : t("login.signIn")}
                       {!submitting && (
                         <svg className="h-4 w-4 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
@@ -246,6 +272,11 @@ export default function LoginPage() {
                   <p className="font-medium">
                     {t("login.loginFor")}: <span className="font-bold">{credentialValue}</span>
                   </p>
+                  {maskedEmail && (
+                    <p className="mt-1.5 text-red-600/80">
+                      {t("login.codeSentTo", { email: maskedEmail })}
+                    </p>
+                  )}
                   {retryAfterSec !== null && retryAfterSec > 0 && (
                     <p className="mt-1.5 text-red-600/80">{t("login.retryAfter", { seconds: retryAfterSec })}</p>
                   )}
@@ -267,12 +298,7 @@ export default function LoginPage() {
                 <div className="flex gap-4 pt-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setStep(1);
-                      setCode("");
-                      setErrorMessage("");
-                      setMessage("");
-                    }}
+                    onClick={goBackToCredentials}
                     className="flex w-[40%] items-center justify-center rounded-xl bg-white px-4 py-4 text-sm font-semibold text-zinc-600 border border-zinc-200 shadow-sm transition-all hover:bg-zinc-50 hover:text-zinc-900"
                   >
                     {t("login.back")}

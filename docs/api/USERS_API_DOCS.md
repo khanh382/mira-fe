@@ -10,6 +10,9 @@ This document summarizes all available APIs in the `users` module, including req
   - `access_token` (30 minutes)
   - `refresh_token` (30 days)
 - Standard status header on all responses: `X-Status-Code`
+- Login email-code gate (server env):
+  - `LOGIN_EMAIL_CODE_REQUIRED=true` (default if unset): 2-step login (`POST /login` → `POST /verify-login`)
+  - `LOGIN_EMAIL_CODE_REQUIRED=false`: 1-step login — password OK → cookies issued immediately on `POST /login` (no verify-login)
 
 ## Global Response Format
 
@@ -38,7 +41,7 @@ Notes:
 
 ---
 
-## 1) Login Step 1 - Send Verification Code
+## 1) Login - Credentials (+ optional email code)
 
 ### Endpoint
 
@@ -46,7 +49,14 @@ Notes:
 
 ### Purpose
 
-Validate credentials, then send/reuse a login verification code via email.
+Validate credentials. Behavior depends on server env `LOGIN_EMAIL_CODE_REQUIRED`:
+
+| Env | Behavior |
+|-----|----------|
+| `true` (default) | Send/reuse login verification code via email. **No cookies yet.** Frontend must call `POST /users/verify-login`. |
+| `false` | Issue auth cookies immediately and return `user`. Skip email code / verify-login. |
+
+Frontend should branch on `data.emailCodeRequired` in the login response (do not hardcode env on FE).
 
 ### Request Body
 
@@ -75,32 +85,75 @@ Alternative:
 }
 ```
 
-### Success Response (email sent)
+### Success Response A — email code required (`emailCodeRequired: true`)
+
+Email sent:
 
 ```json
 {
   "statusCode": 200,
   "message": "Success",
   "data": {
+    "emailCodeRequired": true,
     "message": "Verification code sent to your email.",
     "emailSent": true,
+    "codeDeliveryEmailMasked": "us***@example.com",
+    "loginCodeReusedFromDb": false,
+    "emailSkippedDueToResendCooldown": false,
     "retryAfterSec": 60,
     "expiresAt": "2026-03-24T10:20:00.000Z"
   }
 }
 ```
 
-### Success Response (cooldown, no resend)
+Cooldown (no resend):
 
 ```json
 {
   "statusCode": 200,
   "message": "Success",
   "data": {
+    "emailCodeRequired": true,
     "message": "A valid verification code already exists. Please wait before requesting another email.",
     "emailSent": false,
+    "codeDeliveryEmailMasked": "us***@example.com",
+    "loginCodeReusedFromDb": true,
+    "emailSkippedDueToResendCooldown": true,
     "retryAfterSec": 24,
     "expiresAt": "2026-03-24T10:20:00.000Z"
+  }
+}
+```
+
+### Success Response B — direct login (`emailCodeRequired: false`)
+
+Also sets cookies:
+- `Set-Cookie: access_token=...; HttpOnly; ...`
+- `Set-Cookie: refresh_token=...; HttpOnly; ...`
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "emailCodeRequired": false,
+    "message": "Login successful.",
+    "user": {
+      "uid": 1,
+      "identifier": "john_identifier",
+      "uname": "john_uname",
+      "email": "user@example.com",
+      "level": "client",
+      "status": "active",
+      "activeEmail": true,
+      "useGgauth": false,
+      "telegramId": null,
+      "discordId": null,
+      "zaloId": null,
+      "slackId": null,
+      "createdAt": "2026-03-24T09:00:00.000Z",
+      "updateAt": "2026-03-24T09:00:00.000Z"
+    }
   }
 }
 ```
@@ -139,6 +192,8 @@ Alternative:
 ### Purpose
 
 Verify login code and issue auth cookies.
+
+**Only needed when** `POST /users/login` returned `emailCodeRequired: true` (server has `LOGIN_EMAIL_CODE_REQUIRED` not set to `false`). If login already returned `user` + cookies, skip this step.
 
 ### Request Body
 
@@ -824,7 +879,10 @@ Return current authenticated user (public fields only).
   - `X-Status-Code` header
   - JSON `statusCode` in body
 - For cookie-based auth from browser, use `credentials: 'include'`.
-- During login/reset flows, frontend should:
-  1. Call step-1 endpoint (`/login` or `/forgot-password`)
-  2. Show input for verification code
-  3. Call step-2 endpoint (`/verify-login` or `/reset-password`)
+- **Login flow (branch on response, not on FE env):**
+  1. `POST /users/login` with credentials
+  2. If `data.emailCodeRequired === false` → session ready (`data.user` + cookies). Navigate to app.
+  3. If `data.emailCodeRequired === true` → show verification-code UI, then `POST /users/verify-login`
+- **Forgot / reset password** remains 2-step (not controlled by `LOGIN_EMAIL_CODE_REQUIRED`):
+  1. `POST /users/forgot-password`
+  2. Show code input → `POST /users/reset-password`

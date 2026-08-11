@@ -10,8 +10,8 @@ Tai lieu API da duoc gom rieng trong thu muc nay de tach biet voi tai lieu luong
 - `CONNECT_WEBHOOKS_API_DOCS.md`
 - `GOG_API_DOCS.md`
 - `OPENCLAW_AGENTS_API_DOCS.md`
+- `USERS_API_DOCS.md` — login/session (`LOGIN_EMAIL_CODE_REQUIRED`, `emailCodeRequired`)
 - `USER_CONFIG_API_DOCS.md`
-- `USERS_API_DOCS.md`
 - `WEBSITES_API_DOCS.md`
 - `WEBHOOK_CHANNELS_API_DOCS.md`
 - `WORKFLOW_API_DOCS.md`
